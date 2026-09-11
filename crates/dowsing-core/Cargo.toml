@@ -1,0 +1,28 @@
+[package]
+name = "dowsing-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core analysis engine for Dowsing Rod — structural refactoring intelligence for Python"
+
+[dependencies]
+rustpython-parser.workspace = true
+rustpython-ast.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+siphasher.workspace = true
+xxhash-rust.workspace = true
+rayon.workspace = true
+ignore.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+tempfile = "3"
+
+[[bench]]
+name = "pipeline_bench"
+harness = false
+path = "../../benches/pipeline_bench.rs"

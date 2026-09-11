@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    name: Rust and Python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets
+
+      - name: Install Python package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Smoke test CLI and Python API
+        run: |
+          dowsing-rod version
+          dowsing-rod scan tests/fixtures --format json --no-cache
+          dowsing-rod scan tests/fixtures --ai --max-tokens 1200 --no-cache
+          python -c "import dowsing_rod; print(dowsing_rod.__version__)"

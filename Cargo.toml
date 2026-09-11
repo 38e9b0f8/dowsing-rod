@@ -1,0 +1,49 @@
+[workspace]
+members = ["crates/dowsing-core", "crates/dowsing-python"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/38e9b0f8/dowsing-rod"
+description = "Structural refactoring intelligence for Python — Rust-native, AI-ready"
+
+[workspace.dependencies]
+# Python parsing
+rustpython-parser = "0.4"
+rustpython-ast = "0.4"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Hashing
+siphasher = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Parallelism
+rayon = "1"
+
+# File discovery
+ignore = "0.4"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Python bindings
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Benchmarks
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

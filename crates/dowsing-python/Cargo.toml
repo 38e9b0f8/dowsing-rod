@@ -1,0 +1,17 @@
+[package]
+name = "dowsing-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings and CLI for Dowsing Rod"
+
+[lib]
+name = "dowsing_rod"
+crate-type = ["cdylib"]
+
+[dependencies]
+dowsing-core = { path = "../dowsing-core" }
+pyo3.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

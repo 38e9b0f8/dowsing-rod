@@ -1,0 +1,35 @@
+# Generated files
+/target/
+/dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.dylib
+*.dll
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.venv/
+venv/
+
+# Cache
+.dowsing-rod-cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.whl
