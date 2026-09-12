@@ -10,14 +10,26 @@ It works offline. Source code is parsed locally, normalized locally, and rendere
 
 ## Install
 
-From PyPI, once published:
+With `uv` (zero install / standalone tool):
+
+```bash
+# Run immediately without installing:
+uvx dowsing-rod scan .
+
+# Or install into your current environment:
+uv pip install dowsing-rod
+
+# Or install as a global CLI tool:
+uv tool install dowsing-rod
+```
+
+With `pip`:
 
 ```bash
 pip install dowsing-rod
 ```
 
 From a local checkout:
-
 ```bash
 pip install .
 ```
