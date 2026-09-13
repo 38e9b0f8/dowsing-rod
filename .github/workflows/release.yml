@@ -40,9 +40,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          args: --release --locked --out dist --find-interpreter
+          args: --release --locked --compatibility pypi --out dist --find-interpreter
           sccache: "true"
-          manylinux: auto
+          manylinux: "2014"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

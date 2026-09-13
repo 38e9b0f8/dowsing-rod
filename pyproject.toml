@@ -26,6 +26,11 @@ classifiers = [
 ]
 keywords = ["refactoring", "static-analysis", "ai", "code-quality", "javascript", "typescript", "c", "cpp", "csharp", "verilog", "vhdl"]
 
+[project.urls]
+Homepage = "https://github.com/38e9b0f8/dowsing-rod"
+Repository = "https://github.com/38e9b0f8/dowsing-rod"
+Issues = "https://github.com/38e9b0f8/dowsing-rod/issues"
+
 [project.scripts]
 dowsing-rod = "dowsing_rod:_cli_main"
 

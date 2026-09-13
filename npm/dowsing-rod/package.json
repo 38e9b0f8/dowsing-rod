@@ -3,6 +3,10 @@
   "version": "0.2.0",
   "description": "Structural refactoring intelligence \u2014 Rust-native, offline, AI-ready",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/38e9b0f8/dowsing-rod.git"
+  },
   "bin": {
     "dowsing-rod": "bin/dowsing-rod.cjs"
   },

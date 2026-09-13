@@ -7,6 +7,7 @@ version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
+repository = "https://github.com/38e9b0f8/dowsing-rod"
 description = "Structural refactoring intelligence for source code — Rust-native, AI-ready"
 
 [workspace.dependencies]

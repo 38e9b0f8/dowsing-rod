@@ -57,6 +57,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 The project uses PyO3 and maturin for Python packaging. The npm and NuGet launchers select matching prebuilt Rust binaries. Neither has install scripts or runtime downloads.
 
+Prebuilt command-line binaries support macOS x64/arm64, Windows x64, and glibc 2.17+ on Linux x64/arm64. That covers RHEL 8–10, current Ubuntu, Debian, Fedora, and SUSE releases. See [platform support](docs/platform-support.md) for runtime floors. musl/Alpine and Windows arm64 are not currently provided.
+
 ## Quick Start
 
 Scan the current project:

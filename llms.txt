@@ -127,7 +127,7 @@ for cluster in results["clusters"]:
 ---
 
 ## Repository & Links
-- Repository: the project repository
+- Repository: https://github.com/38e9b0f8/dowsing-rod
 - PyPI: https://pypi.org/project/dowsing-rod/
-- Documentation: docs/algorithms.md
+- Documentation: https://github.com/38e9b0f8/dowsing-rod/blob/main/docs/algorithms.md
 - License: MIT (with Tree-Sitter grammar notices in `THIRD_PARTY_NOTICES.md`)

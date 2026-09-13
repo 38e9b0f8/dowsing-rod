@@ -6,6 +6,28 @@ on:
   pull_request:
 
 jobs:
+  legacy-linux:
+    name: Linux glibc 2.17 compatibility
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: '0.14.0'
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --version 0.23.4 --locked
+      - name: Build against glibc 2.17
+        run: cargo zigbuild -p dowsing-cli --release --locked --target x86_64-unknown-linux-gnu.2.17
+      - name: Check symbols and run on the manylinux2014 baseline
+        run: |
+          REQUIRED="$(readelf --version-info target/x86_64-unknown-linux-gnu/release/dowsing-rod | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n1)"
+          test "$REQUIRED" = "GLIBC_2.17"
+          docker run --rm -v "$GITHUB_WORKSPACE/target/x86_64-unknown-linux-gnu/release/dowsing-rod:/dowsing-rod:ro" quay.io/pypa/manylinux2014_x86_64 /dowsing-rod version
+
   test:
     name: Rust and Python
     runs-on: ubuntu-latest
