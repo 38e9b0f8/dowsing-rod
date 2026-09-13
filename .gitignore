@@ -33,3 +33,12 @@ Thumbs.db
 
 # Build artifacts
 *.whl
+
+# npm local packaging tests
+node_modules/
+*.tgz
+
+# NuGet release staging
+/nuget/dowsing-rod/native/
+/nuget/**/bin/
+/nuget/**/obj/

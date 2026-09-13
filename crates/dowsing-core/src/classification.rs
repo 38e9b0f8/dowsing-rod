@@ -33,6 +33,11 @@ pub fn classify_cluster(
         );
     }
 
+    if members.iter().any(|member| member.language.is_hdl()) {
+        return (RefactoringClassification::GenericAbstractionCandidate, avg_similarity.min(0.85),
+            "Repeated HDL structure. Review timing, widths, reset behavior, and synthesis semantics before sharing logic.".into());
+    }
+
     // --- Strategy candidate ---
     // High control flow similarity, low call similarity (different implementations)
     let is_strategy = signals.control_flow >= 0.80

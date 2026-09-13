@@ -118,11 +118,16 @@ pub enum FunctionKind {
     AsyncMethod,
     NestedFunction,
     Lambda,
+    Process,
+    Task,
+    Procedure,
 }
 
-/// Extracted information about a single Python function or method.
+/// Extracted information about a single function, method, or HDL procedural block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionInfo {
+    #[serde(default)]
+    pub language: crate::language::Language,
     pub file: PathBuf,
     pub module: String,
     pub qualified_name: String,
@@ -253,6 +258,13 @@ pub enum StructuralToken {
     // Name references
     ExternalName(String), // preserved for external/imported names
     LocalName,            // normalized placeholder for local names
+
+    /// Native grammar node/keyword, preserving language-specific structure.
+    Syntax(String),
+    /// A scoped parameter/local identity; preserves data-flow relationships.
+    LocalBinding(usize),
+    /// Literal spelling retained in strict and balanced modes.
+    Literal(String),
 
     // Block markers
     BlockStart,

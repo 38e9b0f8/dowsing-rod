@@ -316,6 +316,7 @@ mod tests {
         let graph = SimilarityGraph::build(3, &scores, 0.75);
         let functions: Vec<FunctionInfo> = (0..3)
             .map(|i| FunctionInfo {
+                language: crate::language::Language::Python,
                 file: std::path::PathBuf::from(format!("test{i}.py")),
                 module: format!("test{i}"),
                 qualified_name: format!("func{i}"),

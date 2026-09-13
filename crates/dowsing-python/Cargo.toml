@@ -12,6 +12,6 @@ crate-type = ["cdylib"]
 [dependencies]
 dowsing-core = { path = "../dowsing-core" }
 pyo3.workspace = true
-clap.workspace = true
+dowsing-cli = { path = "../dowsing-cli" }
 serde_json.workspace = true
 anyhow.workspace = true

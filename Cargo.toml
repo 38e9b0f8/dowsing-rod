@@ -1,19 +1,28 @@
 [workspace]
-members = ["crates/dowsing-core", "crates/dowsing-python"]
+members = ["crates/dowsing-core", "crates/dowsing-python", "crates/dowsing-cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/38e9b0f8/dowsing-rod"
-description = "Structural refactoring intelligence for Python — Rust-native, AI-ready"
+description = "Structural refactoring intelligence for source code — Rust-native, AI-ready"
 
 [workspace.dependencies]
 # Python parsing
 rustpython-parser = "0.4"
 rustpython-ast = "0.4"
+
+# Native language grammars (no runtime downloads or compiler services)
+tree-sitter = "0.26.6"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-verilog = "1.0.3"
+tree-sitter-vhdl = "1.4.0"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

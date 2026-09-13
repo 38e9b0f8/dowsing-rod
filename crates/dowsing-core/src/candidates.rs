@@ -1,6 +1,14 @@
 use crate::fingerprint::hamming_distance;
 use crate::types::Fingerprints;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+
+/// Exact duplicates are emitted in report-sized groups. This keeps a generated
+/// file containing thousands of identical accessors from becoming quadratic.
+const MAX_EXACT_GROUP_SIZE: usize = 20;
+/// A bounded scoring set keeps large repositories on the LSH path.
+const MAX_CANDIDATES_PER_LANGUAGE: usize = 25_000;
+/// The exhaustive fallback is useful for small scans but is deliberately tiny.
+const EXHAUSTIVE_SIMHASH_LIMIT: usize = 256;
 
 /// Generate candidate pairs for detailed comparison using SimHash locality-sensitive bucketing.
 ///
@@ -26,18 +34,16 @@ pub fn generate_candidates(
 
     // Strategy 1: Exact hash grouping
     // Functions with identical normalized AST hash are definitely candidates
-    let mut exact_groups: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut exact_groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, fp) in fingerprints.iter().enumerate() {
         exact_groups.entry(&fp.exact_hash).or_default().push(i);
     }
     for group in exact_groups.values() {
-        if group.len() >= 2 {
-            for i in 0..group.len() {
-                for j in (i + 1)..group.len() {
-                    let a = group[i].min(group[j]);
-                    let b = group[i].max(group[j]);
-                    candidate_set.insert((a, b));
-                }
+        for chunk in group.chunks(MAX_EXACT_GROUP_SIZE) {
+            // A spanning tree preserves the exact-duplicate component while
+            // avoiding O(chunk²) equivalent scores. All its edges are exact.
+            for &member in &chunk[1..] {
+                candidate_set.insert((chunk[0].min(member), chunk[0].max(member)));
             }
         }
     }
@@ -48,7 +54,7 @@ pub fn generate_candidates(
     let bits_per_band = 8; // 8 bands × 8 bits = 64 bits
 
     for band_idx in 0..num_bands {
-        let mut band_buckets: HashMap<u8, Vec<usize>> = HashMap::new();
+        let mut band_buckets: BTreeMap<u8, Vec<usize>> = BTreeMap::new();
         let shift = band_idx * bits_per_band;
 
         for (i, fp) in fingerprints.iter().enumerate() {
@@ -57,10 +63,16 @@ pub fn generate_candidates(
         }
 
         for bucket in band_buckets.values() {
+            if candidate_set.len() >= MAX_CANDIDATES_PER_LANGUAGE {
+                break;
+            }
             if bucket.len() >= 2 && bucket.len() <= 100 {
                 // Cap bucket size to avoid O(N²) within a single bucket
                 for i in 0..bucket.len() {
                     for j in (i + 1)..bucket.len() {
+                        if candidate_set.len() >= MAX_CANDIDATES_PER_LANGUAGE {
+                            break;
+                        }
                         let idx_a = bucket[i].min(bucket[j]);
                         let idx_b = bucket[i].max(bucket[j]);
                         candidate_set.insert((idx_a, idx_b));
@@ -72,9 +84,12 @@ pub fn generate_candidates(
 
     // Strategy 3: For smaller sets, also check nearby SimHash by Hamming distance
     // This catches pairs that might fall in different bands but are still similar
-    if n <= 5000 {
+    if n <= EXHAUSTIVE_SIMHASH_LIMIT && candidate_set.len() < MAX_CANDIDATES_PER_LANGUAGE {
         for i in 0..n {
             for j in (i + 1)..n {
+                if candidate_set.len() >= MAX_CANDIDATES_PER_LANGUAGE {
+                    break;
+                }
                 let dist = hamming_distance(fingerprints[i].simhash, fingerprints[j].simhash);
                 if dist <= max_hamming_distance {
                     candidate_set.insert((i, j));
@@ -136,5 +151,23 @@ mod tests {
         let fps = vec![make_fp(0, "aaa", 0)];
         let candidates = generate_candidates(&fps, 10);
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_large_exact_group_is_partitioned_without_quadratic_pairs() {
+        let fingerprints = (0..1_000)
+            .map(|id| make_fp(id, "same", 0))
+            .collect::<Vec<_>>();
+        let candidates = generate_candidates(&fingerprints, 0);
+        assert_eq!(candidates.len(), 950);
+        assert!(candidates.iter().all(|(a, b)| a / 20 == b / 20));
+    }
+
+    #[test]
+    fn test_candidate_count_is_bounded() {
+        let fingerprints = (0..2_000)
+            .map(|id| make_fp(id, &format!("{id}"), 0))
+            .collect::<Vec<_>>();
+        assert!(generate_candidates(&fingerprints, 12).len() <= MAX_CANDIDATES_PER_LANGUAGE);
     }
 }

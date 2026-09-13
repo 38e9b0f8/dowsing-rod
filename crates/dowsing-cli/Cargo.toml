@@ -1,0 +1,14 @@
+[package]
+name = "dowsing-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dowsing-rod"
+path = "src/main.rs"
+
+[dependencies]
+dowsing-core = { path = "../dowsing-core" }
+clap.workspace = true
+anyhow.workspace = true

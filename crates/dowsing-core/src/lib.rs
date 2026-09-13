@@ -1,6 +1,6 @@
 //! Dowsing Rod — Core Analysis Engine
 //!
-//! Structural refactoring intelligence for Python codebases.
+//! Structural refactoring intelligence for source codebases.
 //! This crate contains the full analysis pipeline: discover → parse → extract →
 //! normalize → fingerprint → candidates → similarity → graph → cluster → rank.
 //!
@@ -17,6 +17,8 @@ pub mod discovery;
 pub mod extraction;
 pub mod fingerprint;
 pub mod graph;
+pub mod language;
+mod native;
 pub mod normalization;
 pub mod parser;
 pub mod ranking;
@@ -39,12 +41,12 @@ use types::*;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Schema version for output compatibility.
-pub const SCHEMA_VERSION: &str = "1.0";
+pub const SCHEMA_VERSION: &str = "1.1";
 
 /// Run the full analysis pipeline and return a `ScanResult`.
 ///
 /// This is the main entry point for the library. The pipeline:
-/// 1. Discover `.py` files
+/// 1. Discover supported source files
 /// 2. Parse, extract, normalize, and fingerprint (with caching, in parallel)
 /// 3. Generate candidate pairs (SimHash LSH + exact-hash grouping)
 /// 4. Compute detailed multi-signal similarity for each candidate pair
@@ -67,8 +69,8 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
             .ok(); // Ignore error if pool already set
     }
 
-    // ── 2. Discover Python files ────────────────────────────────────
-    let files = discovery::discover_python_files(&scan_path, &config.exclude, &config.include)?;
+    // ── 2. Discover source files ────────────────────────────────────
+    let files = discovery::discover_source_files(&scan_path, &config.exclude, &config.include)?;
 
     if files.is_empty() {
         return Ok(empty_result(
@@ -91,107 +93,52 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
 
     let per_file_results: Vec<FileAnalysis> = files
         .par_iter()
-        .filter_map(|file_path| {
-            // Try cache first
-            if let Some(ref c) = cache {
-                if let Ok(content) = std::fs::read(file_path) {
-                    if let Some(cached) = c.load(file_path, &content, config.normalization) {
-                        cache_hits.fetch_add(1, Ordering::Relaxed);
-                        return Some(FileAnalysis {
-                            functions: cached.functions,
-                            normalized: cached.normalized,
-                            fingerprints: cached.fingerprints,
-                            parse_errors: Vec::new(),
-                        });
-                    }
-                    cache_misses.fetch_add(1, Ordering::Relaxed);
-                }
-            } else {
-                cache_misses.fetch_add(1, Ordering::Relaxed);
-            }
-
-            // Parse
-            let parse_result = match parser::parse_python_file(file_path) {
-                Ok(r) => r,
-                Err(_) => {
+        .map(|file_path| {
+            let content = match std::fs::read(file_path) {
+                Ok(content) => content,
+                Err(error) => {
                     files_with_errors.fetch_add(1, Ordering::Relaxed);
-                    return None;
+                    return FileAnalysis::error(file_path, error.to_string());
                 }
             };
-
-            let parse_errors = parse_result.errors;
-            let body = match parse_result.module {
-                Some(b) => b,
-                None => {
-                    if !parse_errors.is_empty() {
-                        files_with_errors.fetch_add(1, Ordering::Relaxed);
+            if let Some(cached) = cache
+                .as_ref()
+                .and_then(|c| c.load(file_path, &content, config.normalization))
+            {
+                cache_hits.fetch_add(1, Ordering::Relaxed);
+                return FileAnalysis {
+                    functions: cached.functions,
+                    normalized: cached.normalized,
+                    fingerprints: cached.fingerprints,
+                    parse_errors: Vec::new(),
+                };
+            }
+            cache_misses.fetch_add(1, Ordering::Relaxed);
+            let analysis = std::str::from_utf8(&content)
+                .map_err(anyhow::Error::from)
+                .and_then(|source| match language::Language::from_path(file_path) {
+                    Some(language::Language::Python) => {
+                        analyze_python(source, file_path, config.normalization)
                     }
-                    return Some(FileAnalysis {
-                        functions: Vec::new(),
-                        normalized: Vec::new(),
-                        fingerprints: Vec::new(),
-                        parse_errors,
-                    });
-                }
-            };
-
-            // Extract functions
-            let functions = extraction::extract_functions(&body, &parse_result.source, file_path);
-            if functions.is_empty() {
-                return Some(FileAnalysis {
-                    functions: Vec::new(),
-                    normalized: Vec::new(),
-                    fingerprints: Vec::new(),
-                    parse_errors,
+                    Some(language) => {
+                        native::analyze(source, file_path, language, config.normalization)
+                    }
+                    None => unreachable!("discovery only returns supported files"),
                 });
+            let result = analysis.unwrap_or_else(|e| FileAnalysis::error(file_path, e.to_string()));
+            if !result.parse_errors.is_empty() {
+                files_with_errors.fetch_add(1, Ordering::Relaxed);
+            } else if let Some(ref c) = cache {
+                let cached = Cache::make_result(
+                    &content,
+                    config.normalization,
+                    result.functions.clone(),
+                    result.normalized.clone(),
+                    result.fingerprints.clone(),
+                );
+                let _ = c.store(file_path, &content, config.normalization, &cached);
             }
-
-            // Normalize and fingerprint each function
-            let mut normalized = Vec::with_capacity(functions.len());
-            let mut fps = Vec::with_capacity(functions.len());
-
-            for (i, func_info) in functions.iter().enumerate() {
-                // Find the function's AST node to get its body for normalization
-                if let Some(func_body) = find_function_body(
-                    &body,
-                    &func_info.function_name,
-                    func_info.start_line,
-                    &parse_result.source,
-                ) {
-                    let norm = normalization::normalize_function(
-                        func_body,
-                        &func_info.parameters,
-                        &func_info.function_name,
-                        i, // temporary ID, will be reindexed later
-                        config.normalization,
-                        func_info.class_name.as_deref(),
-                    );
-                    let fp = fingerprint::generate_fingerprints(&norm, func_info);
-                    normalized.push(norm);
-                    fps.push(fp);
-                }
-            }
-
-            // Store in cache
-            if let Some(ref c) = cache {
-                if let Ok(content) = std::fs::read(file_path) {
-                    let result = Cache::make_result(
-                        &content,
-                        config.normalization,
-                        functions.clone(),
-                        normalized.clone(),
-                        fps.clone(),
-                    );
-                    let _ = c.store(file_path, &content, config.normalization, &result);
-                }
-            }
-
-            Some(FileAnalysis {
-                functions,
-                normalized,
-                fingerprints: fps,
-                parse_errors,
-            })
+            result
         })
         .collect();
 
@@ -264,7 +211,23 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
     }
 
     // ── 6. Generate candidate pairs ──────────────────────────────────
-    let candidate_pairs = candidates::generate_candidates(&all_fingerprints, 12);
+    // Partition before candidate generation: no wasted cross-language scoring.
+    let mut partitions = std::collections::BTreeMap::<language::Language, Vec<Fingerprints>>::new();
+    for fp in all_fingerprints {
+        partitions
+            .entry(all_functions[fp.function_id].language)
+            .or_default()
+            .push(fp);
+    }
+    let mut candidate_pairs = Vec::new();
+    for fingerprints in partitions.values() {
+        candidate_pairs.extend(
+            candidates::generate_candidates(fingerprints, 12)
+                .into_iter()
+                .map(|(a, b)| (fingerprints[a].function_id, fingerprints[b].function_id)),
+        );
+    }
+    candidate_pairs.sort_unstable();
 
     // ── 7. Compute similarity for each candidate pair ────────────────
     let norm_lookup: std::collections::HashMap<usize, &NormalizedFunction> =
@@ -337,11 +300,60 @@ pub fn clear_cache(project_root: &std::path::Path) -> Result<usize> {
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 /// Per-file analysis result before global re-indexing.
+#[derive(Default)]
 struct FileAnalysis {
     functions: Vec<FunctionInfo>,
     normalized: Vec<NormalizedFunction>,
     fingerprints: Vec<Fingerprints>,
     parse_errors: Vec<ParseError>,
+}
+
+impl FileAnalysis {
+    fn error(path: &std::path::Path, message: String) -> Self {
+        Self {
+            parse_errors: vec![ParseError {
+                file: path.to_path_buf(),
+                line: None,
+                column: None,
+                message,
+            }],
+            ..Self::default()
+        }
+    }
+}
+
+fn analyze_python(
+    source: &str,
+    path: &std::path::Path,
+    level: NormalizationLevel,
+) -> Result<FileAnalysis> {
+    let parsed = parser::parse_python_source(source, path)?;
+    let mut result = FileAnalysis {
+        parse_errors: parsed.errors,
+        ..FileAnalysis::default()
+    };
+    if let Some(body) = parsed.module {
+        for info in extraction::extract_functions(&body, source, path) {
+            if let Some(function_body) =
+                find_function_body(&body, &info.function_name, info.start_line, source)
+            {
+                let norm = normalization::normalize_function(
+                    function_body,
+                    &info.parameters,
+                    &info.function_name,
+                    result.functions.len(),
+                    level,
+                    info.class_name.as_deref(),
+                );
+                result
+                    .fingerprints
+                    .push(fingerprint::generate_fingerprints(&norm, &info));
+                result.normalized.push(norm);
+                result.functions.push(info);
+            }
+        }
+    }
+    Ok(result)
 }
 
 /// Find a function's AST body by name and start line.

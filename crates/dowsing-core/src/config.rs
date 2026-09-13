@@ -30,35 +30,34 @@ struct ToolSection {
 pub fn load_config(project_root: &Path, cli_overrides: ScanConfig) -> Result<ScanConfig> {
     let mut config = ScanConfig::default();
 
-    // Try to load from pyproject.toml
-    let pyproject_path = project_root.join("pyproject.toml");
-    if pyproject_path.exists() {
-        if let Ok(contents) = std::fs::read_to_string(&pyproject_path) {
-            if let Ok(pyproject) = toml::from_str::<PyProjectToml>(&contents) {
-                if let Some(tool) = pyproject.tool {
-                    if let Some(file_config) = tool.dowsing_rod {
-                        if let Some(exclude) = file_config.exclude {
-                            config.exclude = exclude;
-                        }
-                        if let Some(include) = file_config.include {
-                            config.include = include;
-                        }
-                        if let Some(min_sim) = file_config.min_similarity {
-                            config.min_similarity = min_sim;
-                        }
-                        if let Some(norm) = file_config.normalization {
-                            config.normalization = norm;
-                        }
-                        if let Some(max_c) = file_config.max_clusters {
-                            config.max_clusters = Some(max_c);
-                        }
-                        if let Some(max_t) = file_config.max_tokens {
-                            config.max_tokens = Some(max_t);
-                        }
-                    }
-                }
-            }
+    let standalone = project_root.join("dowsing-rod.toml");
+    let pyproject = project_root.join("pyproject.toml");
+    let file_config = if standalone.is_file() {
+        Some(toml::from_str::<FileConfig>(&std::fs::read_to_string(
+            standalone,
+        )?)?)
+    } else if pyproject.is_file() {
+        toml::from_str::<PyProjectToml>(&std::fs::read_to_string(pyproject)?)?
+            .tool
+            .and_then(|t| t.dowsing_rod)
+    } else {
+        None
+    };
+    if let Some(file) = file_config {
+        if let Some(value) = file.exclude {
+            config.exclude = value;
         }
+        if let Some(value) = file.include {
+            config.include = value;
+        }
+        if let Some(value) = file.min_similarity {
+            config.min_similarity = value;
+        }
+        if let Some(value) = file.normalization {
+            config.normalization = value;
+        }
+        config.max_clusters = file.max_clusters;
+        config.max_tokens = file.max_tokens;
     }
 
     // Apply CLI overrides (non-default values override file config)
@@ -88,6 +87,11 @@ pub fn load_config(project_root: &Path, cli_overrides: ScanConfig) -> Result<Sca
         config.jobs = cli_overrides.jobs;
     }
 
+    anyhow::ensure!(
+        config.min_similarity.is_finite() && (0.0..=1.0).contains(&config.min_similarity),
+        "min_similarity must be between 0 and 1"
+    );
+    anyhow::ensure!(config.jobs != Some(0), "jobs must be at least 1");
     Ok(config)
 }
 

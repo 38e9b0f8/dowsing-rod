@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dowsing-rod</ToolCommandName>
+    <PackageId>dowsing-rod</PackageId>
+    <PackageDescription>Structural refactoring intelligence for source code.</PackageDescription>
+    <PackageTags>refactoring;static-analysis;code-quality;ai</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>false</IncludeSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" Link="LICENSE" />
+    <None Include="../../THIRD_PARTY_NOTICES.md" Pack="true" PackagePath="/" Link="THIRD_PARTY_NOTICES.md" />
+    <Content Include="native/osx-arm64/dowsing-rod" Condition="Exists('native/osx-arm64/dowsing-rod')" Pack="true" PackagePath="tools/net8.0/any/native/osx-arm64/" />
+    <Content Include="native/osx-x64/dowsing-rod" Condition="Exists('native/osx-x64/dowsing-rod')" Pack="true" PackagePath="tools/net8.0/any/native/osx-x64/" />
+    <Content Include="native/linux-arm64/dowsing-rod" Condition="Exists('native/linux-arm64/dowsing-rod')" Pack="true" PackagePath="tools/net8.0/any/native/linux-arm64/" />
+    <Content Include="native/linux-x64/dowsing-rod" Condition="Exists('native/linux-x64/dowsing-rod')" Pack="true" PackagePath="tools/net8.0/any/native/linux-x64/" />
+    <Content Include="native/win-x64/dowsing-rod.exe" Condition="Exists('native/win-x64/dowsing-rod.exe')" Pack="true" PackagePath="tools/net8.0/any/native/win-x64/" />
+  </ItemGroup>
+</Project>

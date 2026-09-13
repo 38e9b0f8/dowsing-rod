@@ -1,0 +1,28 @@
+{
+  "name": "dowsing-rod",
+  "version": "0.2.0",
+  "description": "Structural refactoring intelligence \u2014 Rust-native, offline, AI-ready",
+  "license": "MIT",
+  "bin": {
+    "dowsing-rod": "bin/dowsing-rod.cjs"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "optionalDependencies": {
+    "dowsing-rod-native-darwin-arm64": "0.2.0",
+    "dowsing-rod-native-darwin-x64": "0.2.0",
+    "dowsing-rod-native-linux-arm64": "0.2.0",
+    "dowsing-rod-native-linux-x64": "0.2.0",
+    "dowsing-rod-native-win32-x64": "0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

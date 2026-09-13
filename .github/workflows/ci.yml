@@ -29,10 +29,10 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked
 
       - name: Install Python package
         run: |
@@ -45,3 +45,30 @@ jobs:
           dowsing-rod scan tests/fixtures --format json --no-cache
           dowsing-rod scan tests/fixtures --ai --max-tokens 1200 --no-cache
           python -c "import dowsing_rod; print(dowsing_rod.__version__)"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Test npm packed install
+        run: |
+          cargo build -p dowsing-cli --release --locked
+          node scripts/package-npm.mjs linux-x64 target/release/dowsing-rod
+          node scripts/package-npm.mjs launcher -
+          node scripts/test-npm.mjs
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test packed NuGet tool
+        run: |
+          node scripts/package-nuget.mjs linux-x64 target/release/dowsing-rod nuget/dowsing-rod/native
+          dotnet pack nuget/dowsing-rod --configuration Release --output dist/nuget
+          mkdir "$RUNNER_TEMP/dowsing-rod-tool"
+          VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' nuget/Directory.Build.props)"
+          dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
+          "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
+          "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error
