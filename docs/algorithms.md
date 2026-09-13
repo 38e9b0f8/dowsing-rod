@@ -1,6 +1,6 @@
 # Dowsing Rod Algorithms
 
-This document describes the current `0.1.0` analysis pipeline. The implementation is intentionally deterministic and local-first: every phase runs in-process over source files and produces serializable evidence for renderers and downstream tools.
+This document describes the current `0.2.0` analysis pipeline. The implementation is deterministic and local-first: every phase runs in-process over source files and produces serializable evidence for renderers and downstream tools.
 
 ## Pipeline
 
@@ -22,7 +22,7 @@ config
 
 ## Configuration
 
-`ScanConfig` starts from defaults, then merges `[tool.dowsing-rod]` from `pyproject.toml`, then applies caller-provided overrides. The scan target can be a directory or a single `.py` file.
+`ScanConfig` starts from defaults, then merges `[tool.dowsing-rod]` from `pyproject.toml` or top-level keys from `dowsing-rod.toml`, then applies caller-provided overrides. The scan target can be a directory or any supported source file.
 
 The project root is used for config lookup, cache storage, and relative display paths. For a single-file scan, the project root is the file's parent directory.
 
@@ -32,21 +32,23 @@ Discovery uses the `ignore` crate for recursive directory scans. It respects pro
 
 ```text
 .git, .venv, venv, env, __pycache__, .pytest_cache, .mypy_cache,
-.ruff_cache, .tox, .nox, dist, build, node_modules, site-packages,
+.ruff_cache, .tox, .nox, dist, build, node_modules, target, obj, site-packages,
 .eggs, *.egg-info, .dowsing-rod-cache
 ```
 
 User exclusions are added as override globs. User inclusions are added after exclusions so they can opt paths back in.
 
-Single-file scans bypass the directory walker and return the file directly when it has a `.py` extension.
+Supported extensions are `.py`, `.pyi`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, C/C++ source and headers, `.cs`, `.v`, `.vh`, `.sv`, `.svh`, `.vhd`, and `.vhdl`. Single-file scans bypass the directory walker.
+
+The ambiguous `.h` extension is parsed as both C and C++ when necessary; the frontend with fewer error regions is selected. Source requiring preprocessing, generated code, or grammar extensions may still produce recoverable parse diagnostics.
 
 ## Parsing
 
-Parsing uses `rustpython-parser` in module mode. Parse failures are converted into `ParseError` values with file, row, column, and parser message. The scanner normally keeps going when a file fails to parse. With `fail_on_error = true`, the core API returns an error after collecting parse errors.
+Python uses `rustpython-parser`; JavaScript, TypeScript, C, C++, C#, Verilog/SystemVerilog, and VHDL use embedded Tree-sitter grammars. No compiler, language server, service, or runtime grammar download is required. Parse failures are converted into `ParseError` values with file, row, column, and parser message. The scanner normally keeps going when a file fails to parse. With `fail_on_error = true`, the core API returns an error after collecting parse errors.
 
 ## Extraction
 
-Extraction walks the Python AST and records every top-level function, method, async function, async method, and nested function it visits.
+Extraction walks the language AST and records functions, methods, lambdas, nested functions, HDL functions/tasks/procedures, and HDL `always`/`process` blocks. Error-containing native units are omitted rather than treated as trustworthy analysis input.
 
 For each function, Dowsing Rod records:
 
@@ -83,7 +85,7 @@ balanced    normalize parameters and local variables; preserve calls and attribu
 aggressive  like balanced, with literals treated generically
 ```
 
-Balanced normalization is the default because it catches renamed-variable clones without erasing call targets such as `db.save` versus `db.delete`.
+Balanced normalization is the default because it catches renamed-variable clones without erasing call targets such as `db.save` versus `db.delete`. Native frontends retain local-binding identity, member access, operator spelling, literal spelling, and HDL timing/assignment syntax. This preserves data-flow differences such as `x - y` versus `y - x`, and avoids collapsing clocked, combinational, blocking, and nonblocking logic.
 
 ## Fingerprinting
 
@@ -98,15 +100,15 @@ Exact hashes catch direct structural duplicates. SimHash supports approximate lo
 
 ## Candidate Generation
 
-Candidate generation is intentionally cheaper than full similarity scoring.
+Candidate generation is intentionally cheaper than full similarity scoring. Functions are first partitioned by language, so no candidate pair or cluster crosses a language boundary.
 
 It combines:
 
-- exact-hash groups, where every function in a group becomes a candidate pair;
+- exact-hash groups, represented by deterministic report-sized spanning trees;
 - SimHash locality-sensitive buckets;
-- Hamming-distance checks inside buckets.
+- exhaustive Hamming-distance checks only for small language partitions.
 
-This keeps the expensive scoring phase focused on pairs with plausible structural overlap.
+Candidate sets are capped per language partition. This keeps the expensive scoring phase focused on plausible structural overlap and prevents generated code or very large repositories from taking a quadratic path.
 
 ## Similarity Scoring
 

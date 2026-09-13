@@ -204,6 +204,7 @@ impl<'a> FunctionExtractor<'a> {
         let is_test = name.starts_with("test_") || name.starts_with("test");
 
         let info = FunctionInfo {
+            language: crate::language::Language::Python,
             file: self.file_path.to_path_buf(),
             module,
             qualified_name,

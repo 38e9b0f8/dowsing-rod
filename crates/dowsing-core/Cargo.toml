@@ -3,7 +3,7 @@ name = "dowsing-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core analysis engine for Dowsing Rod — structural refactoring intelligence for Python"
+description = "Core analysis engine for Dowsing Rod — structural refactoring intelligence for source code"
 
 [dependencies]
 rustpython-parser.workspace = true
@@ -17,6 +17,15 @@ rayon.workspace = true
 ignore.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
+
+tree-sitter.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
+tree-sitter-c-sharp.workspace = true
+tree-sitter-verilog.workspace = true
+tree-sitter-vhdl.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

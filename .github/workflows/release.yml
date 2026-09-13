@@ -9,7 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets
+
   wheels:
+    needs: validate
     name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -28,9 +40,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          args: --release --out dist --find-interpreter
+          args: --release --locked --compatibility pypi --out dist --find-interpreter
           sccache: "true"
-          manylinux: auto
+          manylinux: "2014"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -42,11 +54,20 @@ jobs:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: wheels
+    environment: pypi-release
     permissions:
       contents: read
       id-token: write
 
     steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
+          test "$RELEASE_TAG" = "v$VERSION"
+
       - name: Download wheels
         uses: actions/download-artifact@v4
         with:

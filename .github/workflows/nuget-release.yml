@@ -1,0 +1,131 @@
+name: NuGet release review
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the reviewed package (requires a matching version tag and nuget-release environment approval)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Build native binary (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, rid: osx-arm64, rust_target: aarch64-apple-darwin, artifact_target: aarch64-apple-darwin, builder: cargo, macos: true, macos_deployment_target: '11.0', suffix: '' }
+          - { runner: macos-15-intel, rid: osx-x64, rust_target: x86_64-apple-darwin, artifact_target: x86_64-apple-darwin, builder: cargo, macos: true, macos_deployment_target: '10.12', suffix: '' }
+          - { runner: ubuntu-22.04, rid: linux-x64, rust_target: x86_64-unknown-linux-gnu, artifact_target: x86_64-unknown-linux-gnu, zig_target: x86_64-unknown-linux-gnu.2.17, builder: zig, suffix: '' }
+          - { runner: ubuntu-24.04-arm, rid: linux-arm64, rust_target: aarch64-unknown-linux-gnu, artifact_target: aarch64-unknown-linux-gnu, zig_target: aarch64-unknown-linux-gnu.2.17, builder: zig, suffix: '' }
+          - { runner: windows-2022, rid: win-x64, rust_target: x86_64-pc-windows-msvc, artifact_target: x86_64-pc-windows-msvc, builder: cargo, static_crt: true, suffix: '.exe' }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: Swatinem/rust-cache@v2
+      - uses: goto-bus-stop/setup-zig@v2
+        if: matrix.builder == 'zig'
+        with:
+          version: '0.14.0'
+      - name: Install cargo-zigbuild
+        if: matrix.builder == 'zig'
+        run: cargo install cargo-zigbuild --version 0.23.4 --locked
+      - name: Set macOS deployment target
+        if: matrix.macos
+        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos_deployment_target }}" >> "$GITHUB_ENV"
+      - name: Statically link the Windows C runtime
+        if: matrix.static_crt
+        shell: bash
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p dowsing-core -p dowsing-cli --all-targets --locked -- -D warnings
+      - run: cargo test -p dowsing-core -p dowsing-cli --all-targets --locked
+      - run: cargo build -p dowsing-cli --release --locked --target ${{ matrix.rust_target }}
+        if: matrix.builder == 'cargo'
+      - run: cargo zigbuild -p dowsing-cli --release --locked --target ${{ matrix.zig_target }}
+        if: matrix.builder == 'zig'
+      - name: Verify Linux glibc floor
+        if: matrix.builder == 'zig'
+        run: |
+          REQUIRED="$(readelf --version-info target/${{ matrix.artifact_target }}/release/dowsing-rod | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n1)"
+          test "$REQUIRED" = "GLIBC_2.17"
+      - run: node scripts/package-nuget.mjs ${{ matrix.rid }} target/${{ matrix.artifact_target }}/release/dowsing-rod${{ matrix.suffix }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-native-${{ matrix.rid }}
+          path: dist/nuget-native/${{ matrix.rid }}
+          if-no-files-found: error
+
+  package:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nuget-native-*
+          path: nuget/dowsing-rod/native
+          merge-multiple: true
+      - name: Check staged native binaries
+        run: |
+          test -f nuget/dowsing-rod/native/osx-arm64/dowsing-rod
+          test -f nuget/dowsing-rod/native/osx-x64/dowsing-rod
+          test -f nuget/dowsing-rod/native/linux-arm64/dowsing-rod
+          test -f nuget/dowsing-rod/native/linux-x64/dowsing-rod
+          test -f nuget/dowsing-rod/native/win-x64/dowsing-rod.exe
+      - run: dotnet pack nuget/dowsing-rod --configuration Release --output dist/nuget
+      - name: Test installed tool
+        run: |
+          mkdir "$RUNNER_TEMP/dowsing-rod-tool"
+          VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' nuget/Directory.Build.props)"
+          dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
+          "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
+          "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: dist/nuget/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    environment: nuget-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Check tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' nuget/Directory.Build.props)"
+          test "$RELEASE_TAG" = "v$VERSION"
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: dist/nuget
+      - name: Publish to NuGet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          test -n "$NUGET_API_KEY"
+          dotnet nuget push dist/nuget/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

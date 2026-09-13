@@ -1,12 +1,12 @@
 # Dowsing Rod
 
-Dowsing Rod finds structural refactoring opportunities in Python codebases. It is a Rust-native scanner with Python bindings and a CLI, built for spotting duplicated flows, adapter/strategy candidates, validation helpers, serialization patterns, and other code shapes that ordinary text duplicate detectors miss.
+Dowsing Rod finds structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Verilog, SystemVerilog, and VHDL. It is a Rust-native scanner with a standalone CLI and Python bindings, built for spotting duplicated flows, repeated procedural logic, adapter/strategy candidates, validation helpers, and other code shapes that ordinary text duplicate detectors miss.
 
 It works offline. Source code is parsed locally, normalized locally, and rendered locally.
 
 ## Status
 
-`0.1.0` is an early implementation. The core pipeline, renderers, Python bindings, CLI entrypoint, fixtures, benchmarks, and CI workflow are present. Expect tuning as the similarity model is tested on larger real repositories.
+`0.2.0` adds native parsers for the supported languages plus standalone npm and NuGet CLIs. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
 
 ## Install
 
@@ -29,6 +29,20 @@ With `pip`:
 pip install dowsing-rod
 ```
 
+With npm (no Python or compiler required):
+
+```bash
+npx dowsing-rod scan .
+# or
+npm install --global dowsing-rod
+```
+
+With .NET:
+
+```bash
+dotnet tool install --global dowsing-rod
+```
+
 From a local checkout:
 ```bash
 pip install .
@@ -37,11 +51,13 @@ pip install .
 For development:
 
 ```bash
-cargo test --all-targets
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-The project uses PyO3 and maturin for Python packaging. CI builds wheels with the stable Rust toolchain.
+The project uses PyO3 and maturin for Python packaging. The npm and NuGet launchers select matching prebuilt Rust binaries. Neither has install scripts or runtime downloads.
+
+Prebuilt command-line binaries support macOS x64/arm64, Windows x64, and glibc 2.17+ on Linux x64/arm64. That covers RHEL 8–10, current Ubuntu, Debian, Fedora, and SUSE releases. See [platform support](docs/platform-support.md) for runtime floors. musl/Alpine and Windows arm64 are not currently provided.
 
 ## Quick Start
 
@@ -54,7 +70,7 @@ dowsing-rod scan .
 Scan a specific file:
 
 ```bash
-dowsing-rod scan app/services/payments.py
+dowsing-rod scan rtl/arbiter.sv
 ```
 
 Ask for compact output suitable for an LLM prompt:
@@ -73,7 +89,7 @@ dowsing-rod scan . --format jsonl
 ## Example Human Output
 
 ```text
-Dowsing Rod v0.1.0
+Dowsing Rod v0.2.0
 
 Repository Summary
   Path:            /repo
@@ -100,13 +116,14 @@ Refactoring Opportunities
 ## Example AI Output
 
 ```text
-DOWSING-ROD v0.1.0
-SCHEMA 1.0
+DOWSING-ROD v0.2.0
+SCHEMA 1.1
 REPO /repo files=42 functions=318 tokens~48120
 SCAN clusters=9 high_value=3 duration=184ms
 ---
 C1 | strategy_candidate | signal=86% | confidence=83%
 3 functions | duplicated~420 tokens | reduction~294 tokens | value=312
+LANGUAGE python
 MEMBERS
   payments/stripe.py:charge:4-15
   payments/paypal.py:charge:4-15
@@ -174,7 +191,7 @@ dowsing_rod.clear_cache(path=".") -> int
 
 ## Configuration
 
-Dowsing Rod reads `[tool.dowsing-rod]` from `pyproject.toml` in the project root.
+Dowsing Rod reads `[tool.dowsing-rod]` from `pyproject.toml` or a standalone `dowsing-rod.toml` in the project root.
 
 ```toml
 [tool.dowsing-rod]
@@ -193,10 +210,10 @@ CLI flags and Python keyword arguments override file configuration where an over
 The core pipeline is:
 
 ```text
-discover Python files
-parse with RustPython
-extract function metadata
-normalize AST structure
+discover supported source files
+parse Python with RustPython and other languages with embedded Tree-sitter grammars
+extract functions, methods, lambdas, HDL tasks/functions, and HDL procedural blocks
+normalize scoped structure while preserving calls, member access, operators, literals, and HDL timing/assignment syntax
 fingerprint normalized tokens
 generate candidate pairs with exact hashes and SimHash LSH
 score candidates with multiple similarity signals
@@ -206,7 +223,7 @@ classify and rank refactoring opportunities
 render human, AI, JSON, or JSONL output
 ```
 
-Normalization is deliberately semantic enough to avoid the most obvious false positives. Calls, attributes, operators, control flow, decorators, async-ness, parameter shape, and complexity all contribute to the score.
+Normalization is deliberately semantic enough to avoid the most obvious false positives. Calls, member access, operators, control flow, literals, parameter shape, and complexity all contribute to the score. Clusters are isolated by language; JavaScript and TypeScript are separate languages. HDL suggestions are structural candidates and should be reviewed for timing, widths, reset behavior, and synthesis semantics.
 
 See [docs/algorithms.md](docs/algorithms.md) for implementation details.
 
@@ -244,6 +261,10 @@ cargo bench -p dowsing-core
 
 Benchmarks cover parsing, extraction, normalization, fingerprinting, candidate generation, and synthetic pipeline scale.
 
+## Releases
+
+The release workflows build and test every package before publishing. PyPI and npm use trusted publishing; configure the npm publisher for `dowsing-rod` and the five `dowsing-rod-native-*` packages. NuGet uses a scoped API key stored as `NUGET_API_KEY` in the `nuget-release` environment. Configure the trusted publishers and environment approval before the first release. Dispatch the npm and NuGet workflows from a matching `v<version>` tag with `publish` enabled.
+
 ## Comparison With Other Tools
 
 Dowsing Rod is not a linter and does not replace formatters, type checkers, or text-level duplicate detectors.
@@ -254,12 +275,14 @@ It is most useful when:
 - provider implementations repeat the same pipeline with different API calls;
 - small validation, serialization, or helper patterns are copied across modules;
 - you want a compact, ranked summary to hand to an AI coding assistant.
+- you want to keep agent refactors grounded when working in a large, multi-language project.
 
 It is less useful when:
 
 - duplication is purely textual and already obvious;
-- code cannot be parsed as Python;
-- the right abstraction depends on runtime behavior or domain constraints not present in source.
+- code cannot be parsed by its supported language frontend;
+- the right abstraction depends on runtime behavior or domain constraints not present in source;
+- the project is small enough that you should just do it yourself.
 
 ## Privacy
 
@@ -267,4 +290,4 @@ Dowsing Rod does not call external services. It reads local source files, writes
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

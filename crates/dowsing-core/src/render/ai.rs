@@ -32,6 +32,14 @@ pub fn render<W: Write>(
         result.statistics.scan_duration_ms,
     )?;
 
+    if !result.parse_errors.is_empty() {
+        writeln!(
+            writer,
+            "PARSE_ERRORS {} (affected units omitted; use JSON for diagnostics)",
+            result.parse_errors.len()
+        )?;
+    }
+
     if result.clusters.is_empty() {
         writeln!(writer, "NO_CLUSTERS")?;
         return Ok(());
@@ -72,6 +80,14 @@ pub fn render<W: Write>(
             cluster.potential_reduction_estimate,
             cluster.refactoring_value,
         )?;
+
+        if let Some(member) = cluster
+            .function_indices
+            .first()
+            .and_then(|&i| result.functions.get(i))
+        {
+            writeln!(writer, "LANGUAGE {}", member.language)?;
+        }
 
         // Function locations
         writeln!(writer, "MEMBERS")?;

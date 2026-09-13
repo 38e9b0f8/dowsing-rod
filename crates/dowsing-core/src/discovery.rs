@@ -17,23 +17,25 @@ const DEFAULT_EXCLUDES: &[&str] = &[
     "dist",
     "build",
     "node_modules",
+    "target",
+    "obj",
     "site-packages",
     ".eggs",
     "*.egg-info",
     ".dowsing-rod-cache",
 ];
 
-/// Discover all Python files in the given directory.
+/// Discover all supported source files in the given directory.
 ///
 /// Uses the `ignore` crate which natively respects `.gitignore` files.
 /// Does not follow symlinks by default.
-pub fn discover_python_files(
+pub fn discover_source_files(
     root: &Path,
     extra_excludes: &[String],
     extra_includes: &[String],
 ) -> Result<Vec<PathBuf>> {
     if root.is_file() {
-        if root.extension().is_some_and(|ext| ext == "py") {
+        if crate::language::Language::from_path(root).is_some() {
             return Ok(vec![root.to_path_buf()]);
         }
         return Ok(Vec::new());
@@ -78,7 +80,7 @@ pub fn discover_python_files(
     for entry in builder.build() {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "py") {
+        if path.is_file() && crate::language::Language::from_path(path).is_some() {
             files.push(path.to_path_buf());
         }
     }
@@ -86,6 +88,20 @@ pub fn discover_python_files(
     // Sort for deterministic output
     files.sort();
     Ok(files)
+}
+
+/// Python-only discovery retained for existing Rust callers.
+pub fn discover_python_files(
+    root: &Path,
+    excludes: &[String],
+    includes: &[String],
+) -> Result<Vec<PathBuf>> {
+    Ok(discover_source_files(root, excludes, includes)?
+        .into_iter()
+        .filter(|p| {
+            crate::language::Language::from_path(p) == Some(crate::language::Language::Python)
+        })
+        .collect())
 }
 
 #[cfg(test)]

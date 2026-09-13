@@ -6,6 +6,28 @@ on:
   pull_request:
 
 jobs:
+  legacy-linux:
+    name: Linux glibc 2.17 compatibility
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: '0.14.0'
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --version 0.23.4 --locked
+      - name: Build against glibc 2.17
+        run: cargo zigbuild -p dowsing-cli --release --locked --target x86_64-unknown-linux-gnu.2.17
+      - name: Check symbols and run on the manylinux2014 baseline
+        run: |
+          REQUIRED="$(readelf --version-info target/x86_64-unknown-linux-gnu/release/dowsing-rod | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n1)"
+          test "$REQUIRED" = "GLIBC_2.17"
+          docker run --rm -v "$GITHUB_WORKSPACE/target/x86_64-unknown-linux-gnu/release/dowsing-rod:/dowsing-rod:ro" quay.io/pypa/manylinux2014_x86_64 /dowsing-rod version
+
   test:
     name: Rust and Python
     runs-on: ubuntu-latest
@@ -29,10 +51,10 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked
 
       - name: Install Python package
         run: |
@@ -45,3 +67,30 @@ jobs:
           dowsing-rod scan tests/fixtures --format json --no-cache
           dowsing-rod scan tests/fixtures --ai --max-tokens 1200 --no-cache
           python -c "import dowsing_rod; print(dowsing_rod.__version__)"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Test npm packed install
+        run: |
+          cargo build -p dowsing-cli --release --locked
+          node scripts/package-npm.mjs linux-x64 target/release/dowsing-rod
+          node scripts/package-npm.mjs launcher -
+          node scripts/test-npm.mjs
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Test packed NuGet tool
+        run: |
+          node scripts/package-nuget.mjs linux-x64 target/release/dowsing-rod nuget/dowsing-rod/native
+          dotnet pack nuget/dowsing-rod --configuration Release --output dist/nuget
+          mkdir "$RUNNER_TEMP/dowsing-rod-tool"
+          VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' nuget/Directory.Build.props)"
+          dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
+          "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
+          "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error

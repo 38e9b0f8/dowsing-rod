@@ -4,8 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "dowsing-rod"
-version = "0.1.0"
-description = "Structural refactoring intelligence for Python — Rust-native, AI-ready"
+version = "0.2.0"
+description = "Structural refactoring intelligence for source code — Rust-native, AI-ready"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Testing",
 ]
-keywords = ["refactoring", "python", "static-analysis", "ai", "code-quality"]
+keywords = ["refactoring", "static-analysis", "ai", "code-quality", "javascript", "typescript", "c", "cpp", "csharp", "verilog", "vhdl"]
 
 [project.urls]
 Homepage = "https://github.com/38e9b0f8/dowsing-rod"
@@ -39,6 +39,7 @@ features = ["pyo3/extension-module", "pyo3/abi3-py39"]
 python-source = "python"
 module-name = "dowsing_rod._native"
 manifest-path = "crates/dowsing-python/Cargo.toml"
+include = ["THIRD_PARTY_NOTICES.md"]
 
 [tool.dowsing-rod]
 # Default configuration
