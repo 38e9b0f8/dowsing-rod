@@ -263,7 +263,7 @@ Benchmarks cover parsing, extraction, normalization, fingerprinting, candidate g
 
 ## Releases
 
-The release workflows build and test every package before publishing. PyPI and npm use trusted publishing; configure the npm publisher for `dowsing-rod` and the five `dowsing-rod-native-*` packages. NuGet uses a scoped API key stored as `NUGET_API_KEY` in the `nuget-release` environment. Configure the trusted publishers and environment approval before the first release. Dispatch the npm and NuGet workflows from a matching `v<version>` tag with `publish` enabled.
+The release workflows build and test every package before publishing. PyPI uses trusted publishing. npm uses trusted publishing after its first release; set a temporary `NPM_TOKEN` in the `npm-release` environment for that bootstrap, configure the publisher for `dowsing-rod` and the five `dowsing-rod-native-*` packages, then delete the token. NuGet uses a scoped API key stored as `NUGET_API_KEY` in the `nuget-release` environment. Configure environment approval before the first release. Dispatch the npm and NuGet workflows from a matching `v<version>` tag with `publish` enabled.
 
 ## Comparison With Other Tools
 

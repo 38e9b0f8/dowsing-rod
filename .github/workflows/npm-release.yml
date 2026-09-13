@@ -105,6 +105,8 @@ jobs:
           merge-multiple: true
       - name: Publish binaries, then launcher (npm trusted publishing)
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           test "$(find dist/tarballs -name '*.tgz' | wc -l)" -eq 6
           for package in dist/tarballs/dowsing-rod-native-*.tgz; do
