@@ -30,12 +30,12 @@ try {
   assert.match(run(npm, ['exec', '--offline', '--', 'dowsing-rod', 'version']), new RegExp(version.replaceAll('.', '\\.')));
   const fixture = join(root, 'tests/languages');
   const result = JSON.parse(run(process.execPath, [launcher, 'scan', fixture, '--format', 'json', '--no-cache', '--fail-on-error']));
-  assert.equal(result.statistics.files_scanned, 9);
-  assert.equal(result.functions.length, 30);
+  assert.equal(result.statistics.files_scanned, 10);
+  assert.equal(result.functions.length, 37);
   assert.equal(result.parse_errors.length, 0);
   assert.deepEqual(
     new Set(result.functions.map(f => f.language)),
-    new Set(['javascript', 'typescript', 'c', 'cpp', 'csharp', 'verilog', 'system_verilog', 'vhdl']),
+    new Set(['javascript', 'typescript', 'c', 'cpp', 'csharp', 'rust', 'verilog', 'system_verilog', 'vhdl']),
   );
   assert.match(run(process.execPath, [launcher, 'scan', fixture, '--ai', '--max-tokens', '1000', '--no-cache']), /LANGUAGE/);
   const lines = run(process.execPath, [launcher, 'scan', fixture, '--format', 'jsonl', '--no-cache']).trim().split('\n').map(JSON.parse);

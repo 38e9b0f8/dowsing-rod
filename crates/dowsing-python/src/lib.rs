@@ -14,7 +14,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Scan a Python codebase for structural refactoring opportunities.
+/// Scan a codebase for structural refactoring opportunities.
 ///
 /// Returns a dict with schema_version, tool_version, repository, statistics,
 /// clusters, functions, and parse_errors.

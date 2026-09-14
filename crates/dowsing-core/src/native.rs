@@ -196,6 +196,8 @@ fn unit_kind(node: Node<'_>, language: Language) -> Option<FunctionKind> {
             Method
         }
         (Language::TypeScript | Language::JavaScript, "arrow_function") => Lambda,
+        (Language::Rust, "function_item") if node.child_by_field_name("body").is_some() => Function,
+        (Language::Rust, "closure_expression") => Lambda,
         (Language::C | Language::Cpp, "function_definition")
             if node.child_by_field_name("body").is_some() =>
         {
@@ -297,7 +299,7 @@ fn spelling(raw: &str, language: Language) -> String {
     }
 }
 
-fn parameter_nodes(node: Node<'_>, language: Language) -> Vec<Node<'_>> {
+fn parameter_nodes<'a>(node: Node<'a>, source: &str, language: Language) -> Vec<Node<'a>> {
     let container = node
         .child_by_field_name("parameters")
         .or_else(|| node.child_by_field_name("parameter"))
@@ -319,6 +321,9 @@ fn parameter_nodes(node: Node<'_>, language: Language) -> Vec<Node<'_>> {
         }
         let mut pending = vec![container];
         while let Some(n) = pending.pop() {
+            if n.kind() == "self_parameter" {
+                continue;
+            }
             if matches!(
                 n.kind(),
                 "required_parameter"
@@ -335,7 +340,15 @@ fn parameter_nodes(node: Node<'_>, language: Language) -> Vec<Node<'_>> {
                             .and_then(declarator_name)
                     })
                 {
-                    parameters.push(name);
+                    if language == Language::Rust && name.kind() != "identifier" {
+                        parameters.extend(
+                            rust_pattern_bindings(name)
+                                .into_iter()
+                                .filter(|binding| !is_rust_non_local(text(*binding, source))),
+                        );
+                    } else if language != Language::Rust || !is_rust_non_local(text(name, source)) {
+                        parameters.push(name);
+                    }
                 }
                 continue;
             }
@@ -348,12 +361,73 @@ fn parameter_nodes(node: Node<'_>, language: Language) -> Vec<Node<'_>> {
                 parameters.push(n);
                 continue;
             }
+            if language == Language::Rust && is_rust_pattern_binding(n) {
+                if !is_rust_non_local(text(n, source)) {
+                    parameters.push(n);
+                }
+                continue;
+            }
             let mut cursor = n.walk();
             let children: Vec<_> = n.named_children(&mut cursor).collect();
             pending.extend(children.into_iter().rev());
         }
     }
     parameters
+}
+
+fn is_rust_non_local(name: &str) -> bool {
+    matches!(name, "self" | "Self" | "super" | "crate")
+}
+
+fn is_rust_pattern_binding(node: Node<'_>) -> bool {
+    match node.kind() {
+        "shorthand_field_identifier" => true,
+        "identifier" => !node.parent().is_some_and(|parent| {
+            matches!(parent.kind(), "scoped_identifier" | "generic_pattern")
+                || (parent.kind() == "tuple_struct_pattern"
+                    && parent.child_by_field_name("type") == Some(node))
+        }),
+        _ => false,
+    }
+}
+
+fn rust_pattern_bindings(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut bindings = Vec::new();
+    let mut pending = vec![node];
+    while let Some(current) = pending.pop() {
+        if current.kind() == "match_pattern" {
+            let condition = current.child_by_field_name("condition");
+            let mut cursor = current.walk();
+            let children: Vec<_> = current.named_children(&mut cursor).collect();
+            pending.extend(
+                children
+                    .into_iter()
+                    .rev()
+                    .filter(|child| condition != Some(*child)),
+            );
+            continue;
+        }
+        if is_rust_pattern_binding(current) {
+            bindings.push(current);
+            continue;
+        }
+        if matches!(
+            current.kind(),
+            "type_identifier" | "primitive_type" | "lifetime" | "macro_invocation"
+        ) {
+            continue;
+        }
+        let type_field = current.child_by_field_name("type");
+        let mut cursor = current.walk();
+        let children: Vec<_> = current.named_children(&mut cursor).collect();
+        pending.extend(
+            children
+                .into_iter()
+                .rev()
+                .filter(|child| type_field != Some(*child)),
+        );
+    }
+    bindings
 }
 
 struct ExtractOptions<'a> {
@@ -410,10 +484,16 @@ fn extract(
                 node.start_position().column + 1
             )
         });
-    if language == Language::Cpp && kind == FunctionKind::Function {
+    if matches!(language, Language::Cpp | Language::Rust) && kind == FunctionKind::Function {
         let mut parent = node.parent();
         while let Some(p) = parent {
-            if matches!(p.kind(), "class_specifier" | "struct_specifier") {
+            if language == Language::Rust && unit_kind(p, language).is_some() {
+                break;
+            }
+            if matches!(
+                p.kind(),
+                "class_specifier" | "struct_specifier" | "impl_item" | "trait_item"
+            ) {
                 kind = FunctionKind::Method;
                 break;
             }
@@ -436,11 +516,19 @@ fn extract(
                 | "module_declaration"
                 | "architecture_definition"
                 | "package_definition"
+                | "impl_item"
+                | "mod_item"
+                | "trait_item"
         ) || unit_kind(p, language).is_some()
         {
             let scope = p
                 .child_by_field_name("name")
                 .or_else(|| p.child_by_field_name("architecture"))
+                .or_else(|| {
+                    (p.kind() == "impl_item")
+                        .then(|| p.child_by_field_name("type"))
+                        .flatten()
+                })
                 .or_else(|| {
                     matches!(
                         p.kind(),
@@ -458,7 +546,10 @@ fn extract(
                 .or_else(|| unit_name(p, language));
             if let Some(scope) = scope {
                 let scope = text(scope, source).to_string();
-                if class_name.is_none() && p.kind().contains("class") {
+                if class_name.is_none()
+                    && (p.kind().contains("class")
+                        || matches!(p.kind(), "impl_item" | "trait_item"))
+                {
                     class_name = Some(scope.clone());
                 }
                 scopes.push(scope);
@@ -471,7 +562,7 @@ fn extract(
     }
     scopes.reverse();
     scopes.push(name.clone());
-    let parameters: Vec<String> = parameter_nodes(node, language)
+    let parameters: Vec<String> = parameter_nodes(node, source, language)
         .into_iter()
         .map(|n| spelling(text(n, source), language))
         .collect();
@@ -579,6 +670,21 @@ impl Normalizer<'_> {
     }
 
     fn register(&mut self, node: Node<'_>) {
+        if self.language == Language::Rust {
+            if let Some(pattern) = match node.kind() {
+                "let_declaration" | "for_expression" | "match_arm" => {
+                    node.child_by_field_name("pattern")
+                }
+                _ => None,
+            } {
+                for binding in rust_pattern_bindings(pattern) {
+                    let name = spelling(text(binding, self.source), self.language);
+                    if !is_rust_non_local(&name) {
+                        self.bind(name);
+                    }
+                }
+            }
+        }
         let binding = match node.kind() {
             "variable_declarator" => node.child_by_field_name("name"),
             "for_in_statement" => node.child_by_field_name("left"),
@@ -640,6 +746,11 @@ impl Normalizer<'_> {
                         | "seq_block"
                         | "for_statement"
                         | "for_in_statement"
+                        | "for_expression"
+                        | "loop_expression"
+                        | "while_expression"
+                        | "match_expression"
+                        | "match_arm"
                 );
             if is_scope {
                 self.locals.push(HashMap::new());
@@ -742,10 +853,14 @@ fn is_member(node: Node<'_>) -> bool {
                 | "field_expression"
                 | "qualified_identifier"
                 | "selection"
+                | "scoped_identifier"
+                | "scoped_type_identifier"
         ) && p
             .child_by_field_name("expression")
             .or_else(|| p.child_by_field_name("object"))
             .or_else(|| p.child_by_field_name("argument"))
+            .or_else(|| p.child_by_field_name("value"))
+            .or_else(|| p.child_by_field_name("path"))
             != Some(node)
     })
 }
@@ -763,8 +878,11 @@ fn literal_kind(kind: &str) -> bool {
             | "decimal_real_literal"
             | "string"
             | "string_literal"
+            | "raw_string_literal"
             | "character_literal"
             | "char_literal"
+            | "float_literal"
+            | "boolean_literal"
             | "bit_string_literal"
             | "based_literal"
             | "decimal_literal"
@@ -779,18 +897,20 @@ fn control_token(kind: &str, value: &str) -> Option<StructuralToken> {
         "if_statement"
         | "conditional_statement"
         | "conditional_expression"
-        | "if_else_statement" => If,
+        | "if_else_statement"
+        | "if_expression" => If,
         "for_statement" | "for_in_statement" | "for_range_loop" | "foreach_statement"
-        | "loop_statement" => For,
-        "while_statement" | "do_statement" => While,
-        "switch_statement" | "case_statement" => Match,
-        "case_item" | "case_statement_alternative" | "switch_section" => Case,
-        "return_statement" => Return,
-        "break_statement" => Break,
-        "continue_statement" => Continue,
+        | "loop_statement" | "for_expression" => For,
+        "while_statement" | "do_statement" | "loop_expression" | "while_expression" => While,
+        "switch_statement" | "case_statement" | "match_expression" => Match,
+        "case_item" | "case_statement_alternative" | "switch_section" | "match_arm" => Case,
+        "return_statement" | "return_expression" => Return,
+        "break_statement" | "break_expression" => Break,
+        "continue_statement" | "continue_expression" => Continue,
         "try_statement" => Try,
+        "try_expression" | "throw_statement" => Raise,
+        "await_expression" => Await,
         "catch_clause" => ExceptHandler,
-        "throw_statement" => Raise,
         "else" if value == "else" => Else,
         _ => return None,
     })
@@ -799,6 +919,7 @@ fn control_token(kind: &str, value: &str) -> Option<StructuralToken> {
 fn call_target(node: Node<'_>, source: &str, language: Language) -> Option<String> {
     let target = match node.kind() {
         "call_expression" => node.child_by_field_name("function"),
+        "macro_invocation" => node.child_by_field_name("macro"),
         "invocation_expression" => node.child_by_field_name("function"),
         "tf_call" | "system_tf_call" => node.named_child(0),
         "name"
@@ -833,6 +954,7 @@ mod tests {
             "duplicates.c",
             "duplicates.cpp",
             "duplicates.cs",
+            "duplicates.rs",
             "duplicates.vhd",
         ] {
             let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -915,6 +1037,7 @@ mod tests {
             ("c", "int good(int x) { return x; } int broken( {"),
             ("cpp", "int good(int x) { return x; } int broken( {"),
             ("cs", "class A { int Good(int x) { return x; } int Broken( { }"),
+            ("rs", "fn good(x: i32) -> i32 { x } fn broken( {"),
             ("sv", "module m; function int good(int x); return x; endfunction always_ff @( begin endmodule"),
             ("vhd", "package body p is function good(x: integer) return integer is begin return x; end function; function broken( end package body;"),
         ] {
@@ -933,6 +1056,88 @@ mod tests {
     #[test]
     fn nested_bodies_do_not_pollute_parent_calls() {
         let r = run("function outer(x: number) { function inner(y: number) { return danger(y); } return safe(x); }", "ts", NormalizationLevel::Balanced);
+        assert_eq!(r.functions.len(), 2);
+        assert_eq!(r.functions[1].qualified_name, "outer::inner");
+        assert!(r.functions[0].called_functions.contains("safe"));
+        assert!(!r.functions[0].called_functions.contains("danger"));
+    }
+    #[test]
+    fn rust_impl_methods_and_trait_signatures() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/languages")
+            .join("duplicates.rs");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let result = analyze(&source, &path, Language::Rust, NormalizationLevel::Balanced).unwrap();
+        assert!(result.parse_errors.is_empty());
+        assert_eq!(result.functions.len(), 7);
+        let first = result
+            .functions
+            .iter()
+            .find(|function| function.function_name == "first")
+            .unwrap();
+        let second = result
+            .functions
+            .iter()
+            .find(|function| function.function_name == "second")
+            .unwrap();
+        assert_eq!(first.kind, FunctionKind::Method);
+        assert_eq!(second.kind, FunctionKind::Method);
+        assert_eq!(first.class_name.as_deref(), Some("Calculator"));
+        assert_eq!(second.class_name.as_deref(), Some("Calculator"));
+        assert!(result
+            .functions
+            .iter()
+            .all(|function| function.function_name != "required"));
+        let fetch_one = result
+            .functions
+            .iter()
+            .find(|function| function.function_name == "fetch_one")
+            .unwrap();
+        assert_eq!(fetch_one.kind, FunctionKind::AsyncFunction);
+    }
+    #[test]
+    fn rust_self_is_not_a_local() {
+        let r = run(
+            "impl T { fn a(&self, x: i32) -> i32 { x } fn b(&self, y: i32) -> i32 { y } }",
+            "rs",
+            NormalizationLevel::Balanced,
+        );
+        assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+        let r = run(
+            "impl T { fn a(&self) -> i32 { self.x } fn b(&self) -> i32 { self.y } }",
+            "rs",
+            NormalizationLevel::Balanced,
+        );
+        assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
+    }
+    #[test]
+    fn rust_control_flow_and_macros_survive() {
+        let r = run(
+            "fn a(x: i32) -> i32 { if x > 0 { x } else { 0 } } fn b(x: i32) -> i32 { match x { n if n > 0 => n, _ => 0 } }",
+            "rs",
+            NormalizationLevel::Balanced,
+        );
+        assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
+        let r = run(
+            "fn a(x: i32) -> i32 { foo(x) } fn b(x: i32) -> i32 { foo(x)? }",
+            "rs",
+            NormalizationLevel::Balanced,
+        );
+        assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
+        let r = run(
+            "fn a() { println!(\"a\"); } fn b() { eprintln!(\"a\"); }",
+            "rs",
+            NormalizationLevel::Balanced,
+        );
+        assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
+    }
+    #[test]
+    fn rust_nested_fn_does_not_pollute_parent_calls() {
+        let r = run(
+            "fn outer(x: i32) -> i32 { fn inner(y: i32) -> i32 { danger(y) } safe(x) }",
+            "rs",
+            NormalizationLevel::Balanced,
+        );
         assert_eq!(r.functions.len(), 2);
         assert_eq!(r.functions[1].qualified_name, "outer::inner");
         assert!(r.functions[0].called_functions.contains("safe"));
