@@ -88,7 +88,7 @@ pub fn render<W: Write>(result: &ScanResult, writer: &mut W) -> std::io::Result<
             writer,
             is_tty,
             "\x1b[0;32m",
-            "  ✓ No refactoring opportunities found above the similarity threshold.",
+            "  ✓ No structural matches found above the similarity threshold.",
         )?;
         writeln!(writer)?;
         writeln!(writer)?;
@@ -96,7 +96,7 @@ pub fn render<W: Write>(result: &ScanResult, writer: &mut W) -> std::io::Result<
     }
 
     // ── Cluster overview table ───────────────────────────────────────
-    write_styled(writer, is_tty, "\x1b[1m", "  Refactoring Opportunities")?;
+    write_styled(writer, is_tty, "\x1b[1m", "  Structural Findings")?;
     writeln!(writer)?;
     writeln!(writer)?;
 
@@ -195,12 +195,16 @@ pub fn render<W: Write>(result: &ScanResult, writer: &mut W) -> std::io::Result<
         )?;
 
         // Estimates
-        writeln!(
-            writer,
-            "    Duplicated tokens: ~{}  |  Potential reduction: ~{}",
-            format_number(cluster.duplicated_tokens_estimate),
-            format_number(cluster.potential_reduction_estimate),
-        )?;
+        if cluster.classification == crate::types::RefactoringClassification::HdlReviewRequired {
+            writeln!(writer, "    Manual review only; no reduction estimate.")?;
+        } else {
+            writeln!(
+                writer,
+                "    Duplicated tokens: ~{}  |  Potential reduction: ~{}",
+                format_number(cluster.duplicated_tokens_estimate),
+                format_number(cluster.potential_reduction_estimate),
+            )?;
+        }
 
         // Reason
         writeln!(writer)?;

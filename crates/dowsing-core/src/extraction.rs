@@ -227,6 +227,7 @@ impl<'a> FunctionExtractor<'a> {
             is_classmethod,
             is_staticmethod,
             is_async,
+            parser_recovered: false,
         };
 
         self.functions.push(info);

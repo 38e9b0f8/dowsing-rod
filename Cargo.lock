@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "dowsing-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "dowsing-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "dowsing-python"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "dowsing-cli",

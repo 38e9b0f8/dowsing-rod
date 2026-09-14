@@ -13,7 +13,19 @@ pub(crate) fn analyze(
     language: Language,
     level: NormalizationLevel,
 ) -> Result<FileAnalysis> {
-    let (language, tree) = select_grammar(source, path, language)?;
+    let (language, initial_tree) = select_grammar(source, path, language)?;
+    let mut recovered_source = None;
+    let mut tree = initial_tree;
+    if language == Language::SystemVerilog && tree.root_node().has_error() {
+        let recovered = sanitize_systemverilog_for_recovery(source);
+        let recovered_tree = parse_tree(&recovered, language.grammar(path))?;
+        if !recovered_tree.root_node().has_error() {
+            recovered_source = Some(recovered);
+            tree = recovered_tree;
+        }
+    }
+    let parser_source = recovered_source.as_deref().unwrap_or(source);
+    let parser_recovered = recovered_source.is_some();
     let mut result = FileAnalysis::default();
     let mut pending = vec![tree.root_node()];
     while let Some(node) = pending.pop() {
@@ -36,12 +48,15 @@ pub(crate) fn analyze(
             if !node.has_error() {
                 let (info, normalized) = extract(
                     node,
-                    source,
-                    path,
-                    language,
                     kind,
-                    level,
                     result.functions.len(),
+                    ExtractOptions {
+                        source: parser_source,
+                        path,
+                        language,
+                        level,
+                        parser_recovered,
+                    },
                 );
                 result
                     .fingerprints
@@ -58,6 +73,59 @@ pub(crate) fn analyze(
         pending.extend(children.into_iter().rev());
     }
     Ok(result)
+}
+
+/// The bundled grammar parses standard SystemVerilog but does not accept some
+/// common UVM macro and subroutine forms. On a failed parse, retain declaration
+/// headers and blank only subroutine bodies and preprocessor lines. The result
+/// is used for discovery only; recovered units are excluded from clustering.
+fn sanitize_systemverilog_for_recovery(source: &str) -> String {
+    enum State {
+        Outside,
+        Header,
+        Body,
+    }
+
+    let mut state = State::Outside;
+    let mut sanitized = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
+        let trimmed = content.trim_start();
+        let starts_subroutine = trimmed.starts_with("function") || trimmed.starts_with("task");
+        let ends_subroutine = trimmed.starts_with("endfunction") || trimmed.starts_with("endtask");
+        let blank = |line: &str| {
+            line.chars()
+                .map(|character| if character == '\t' { '\t' } else { ' ' })
+                .collect::<String>()
+        };
+
+        match state {
+            State::Outside if trimmed.starts_with('`') => sanitized.push_str(&blank(content)),
+            State::Outside if starts_subroutine => {
+                sanitized.push_str(content);
+                state = if content.contains(';') {
+                    State::Body
+                } else {
+                    State::Header
+                };
+            }
+            State::Outside => sanitized.push_str(content),
+            State::Header => {
+                sanitized.push_str(content);
+                if content.contains(';') {
+                    state = State::Body;
+                }
+            }
+            State::Body if ends_subroutine => {
+                sanitized.push_str(content);
+                state = State::Outside;
+            }
+            State::Body => sanitized.push_str(&blank(content)),
+        }
+        sanitized.push_str(newline);
+    }
+    sanitized
 }
 
 /// `.h` is inherently ambiguous. Parse it as both C and C++ and keep the
@@ -106,6 +174,7 @@ fn unit_kind(node: Node<'_>, language: Language) -> Option<FunctionKind> {
         (Language::Verilog | Language::SystemVerilog, "always_construct") => Process,
         (Language::Verilog | Language::SystemVerilog, "function_declaration") => Function,
         (Language::Verilog | Language::SystemVerilog, "task_declaration") => Task,
+        (Language::SystemVerilog, "class_constructor_declaration") => Function,
         (Language::Vhdl, "process_statement") => Process,
         (Language::Vhdl, "subprogram_definition") => {
             if child_kind(node, "procedure_specification").is_some() {
@@ -287,15 +356,27 @@ fn parameter_nodes(node: Node<'_>, language: Language) -> Vec<Node<'_>> {
     parameters
 }
 
+struct ExtractOptions<'a> {
+    source: &'a str,
+    path: &'a Path,
+    language: Language,
+    level: NormalizationLevel,
+    parser_recovered: bool,
+}
+
 fn extract(
     node: Node<'_>,
-    source: &str,
-    path: &Path,
-    language: Language,
     mut kind: FunctionKind,
-    level: NormalizationLevel,
     id: usize,
+    options: ExtractOptions<'_>,
 ) -> (FunctionInfo, NormalizedFunction) {
+    let ExtractOptions {
+        source,
+        path,
+        language,
+        level,
+        parser_recovered,
+    } = options;
     let name_node = if kind == FunctionKind::Process && language != Language::Vhdl {
         None
     } else {
@@ -303,6 +384,10 @@ fn extract(
     };
     let name = name_node
         .map(|n| text(n, source).trim_end_matches(':').trim().to_string())
+        .or_else(|| {
+            (language == Language::SystemVerilog && node.kind() == "class_constructor_declaration")
+                .then_some("new".to_string())
+        })
         .or_else(|| {
             node.parent()
                 .filter(|p| matches!(p.kind(), "variable_declarator" | "init_declarator" | "pair"))
@@ -356,6 +441,14 @@ fn extract(
             let scope = p
                 .child_by_field_name("name")
                 .or_else(|| p.child_by_field_name("architecture"))
+                .or_else(|| {
+                    matches!(
+                        p.kind(),
+                        "class_declaration" | "class_specifier" | "struct_specifier"
+                    )
+                    .then(|| find_kind(p, &["class_identifier", "type_identifier"]))
+                    .flatten()
+                })
                 .or_else(|| {
                     child_kind(p, "module_header")
                         .or_else(|| child_kind(p, "module_nonansi_header"))
@@ -451,6 +544,7 @@ fn extract(
         is_classmethod: false,
         is_staticmethod: false,
         is_async,
+        parser_recovered,
     };
     (
         info,
@@ -849,6 +943,35 @@ mod tests {
         let r = run("package body p is function First(x: integer) return integer is begin return x + 1; end function First; FUNCTION SECOND(Y: INTEGER) RETURN INTEGER IS BEGIN RETURN Y + 1; END FUNCTION SECOND; end package body;", "vhd", NormalizationLevel::Balanced);
         assert!(r.parse_errors.is_empty());
         assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+    }
+
+    #[test]
+    fn systemverilog_uvm_headers_recover_for_discovery() {
+        let source = r#"`ifndef PACKET_SVH
+`define PACKET_SVH
+`include "uvm_macros.svh"
+import uvm_pkg::*;
+class packet extends uvm_sequence_item;
+  `uvm_object_utils(packet)
+  function new(string name = "packet");
+    super.new(name);
+  endfunction
+  function void do_print(uvm_printer printer);
+    super.do_print(printer);
+    printer.print_field("data", data, 16, UVM_HEX);
+  endfunction
+endclass
+`endif
+"#;
+        let result = run(source, "svh", NormalizationLevel::Balanced);
+        assert!(result.parse_errors.is_empty());
+        assert_eq!(result.functions.len(), 2);
+        assert_eq!(result.functions[0].qualified_name, "packet::new");
+        assert_eq!(result.functions[1].qualified_name, "packet::do_print");
+        assert!(result
+            .functions
+            .iter()
+            .all(|function| function.parser_recovered));
     }
 
     #[test]

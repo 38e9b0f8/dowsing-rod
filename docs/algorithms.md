@@ -44,11 +44,11 @@ The ambiguous `.h` extension is parsed as both C and C++ when necessary; the fro
 
 ## Parsing
 
-Python uses `rustpython-parser`; JavaScript, TypeScript, C, C++, C#, Verilog/SystemVerilog, and VHDL use embedded Tree-sitter grammars. No compiler, language server, service, or runtime grammar download is required. Parse failures are converted into `ParseError` values with file, row, column, and parser message. The scanner normally keeps going when a file fails to parse. With `fail_on_error = true`, the core API returns an error after collecting parse errors.
+Python uses `rustpython-parser`; JavaScript, TypeScript, C, C++, C#, Verilog/SystemVerilog, and VHDL use embedded Tree-sitter grammars. No compiler, language server, service, or runtime grammar download is required. Parse failures are converted into `ParseError` values with file, row, column, and parser message. The scanner normally keeps going when a file fails to parse. With `fail_on_error = true`, the core API returns an error after collecting parse errors. For SystemVerilog headers with common UVM macros or subroutine syntax that the embedded grammar cannot represent, Dowsing Rod recovers declaration headers for discovery and excludes those recovered units from similarity analysis.
 
 ## Extraction
 
-Extraction walks the language AST and records functions, methods, lambdas, nested functions, HDL functions/tasks/procedures, and HDL `always`/`process` blocks. Error-containing native units are omitted rather than treated as trustworthy analysis input.
+Extraction walks the language AST and records functions, methods, lambdas, nested functions, HDL functions/tasks/procedures, and HDL `always`/`process` blocks. Error-containing native units are omitted rather than treated as trustworthy analysis input. HDL procedural blocks are never clustered. Other HDL units are reported only when their normalized forms are exact matches, as `hdl_review_required`, never as an abstraction recommendation or a reduction estimate.
 
 For each function, Dowsing Rod records:
 

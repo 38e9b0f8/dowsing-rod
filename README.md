@@ -6,7 +6,7 @@ It works offline. Source code is parsed locally, normalized locally, and rendere
 
 ## Status
 
-`0.2.0` adds native parsers for the supported languages plus standalone npm and NuGet CLIs. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
+`0.2.1` adds conservative HDL handling: procedural blocks are never refactoring candidates, and UVM-style SystemVerilog headers are recovered for discovery. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
 
 ## Install
 
@@ -89,7 +89,7 @@ dowsing-rod scan . --format jsonl
 ## Example Human Output
 
 ```text
-Dowsing Rod v0.2.0
+Dowsing Rod v0.2.1
 
 Repository Summary
   Path:            /repo
@@ -116,7 +116,7 @@ Refactoring Opportunities
 ## Example AI Output
 
 ```text
-DOWSING-ROD v0.2.0
+DOWSING-ROD v0.2.1
 SCHEMA 1.1
 REPO /repo files=42 functions=318 tokens~48120
 SCAN clusters=9 high_value=3 duration=184ms
@@ -223,7 +223,9 @@ classify and rank refactoring opportunities
 render human, AI, JSON, or JSONL output
 ```
 
-Normalization is deliberately semantic enough to avoid the most obvious false positives. Calls, member access, operators, control flow, literals, parameter shape, and complexity all contribute to the score. Clusters are isolated by language; JavaScript and TypeScript are separate languages. HDL suggestions are structural candidates and should be reviewed for timing, widths, reset behavior, and synthesis semantics.
+Normalization is deliberately semantic enough to avoid the most obvious false positives. Calls, member access, operators, control flow, literals, parameter shape, and complexity all contribute to the score. Clusters are isolated by language; JavaScript and TypeScript are separate languages.
+
+HDL is deliberately conservative. `always` and `process` blocks are extracted but never reported as refactoring candidates. Functions, tasks, and procedures appear only for exact structural matches, as `hdl_review_required` with no reduction estimate. Treat those as a prompt to inspect clocks, resets, event/sensitivity controls, widths, assignment style, resource mapping, timing, and simulation semantics. UVM-style `.svh` headers are recovered for discovery when the embedded grammar cannot parse their macros; recovered units are never clustered.
 
 See [docs/algorithms.md](docs/algorithms.md) for implementation details.
 
