@@ -17,6 +17,7 @@ pub enum Language {
     Cpp,
     #[serde(rename = "csharp")]
     CSharp,
+    Rust,
     Verilog,
     SystemVerilog,
     Vhdl,
@@ -38,6 +39,7 @@ impl Language {
                 Self::Cpp
             }
             "cs" => Self::CSharp,
+            "rs" => Self::Rust,
             "v" | "vh" => Self::Verilog,
             "sv" | "svh" => Self::SystemVerilog,
             "vhd" | "vhdl" => Self::Vhdl,
@@ -63,6 +65,7 @@ impl Language {
             Self::C => tree_sitter_c::LANGUAGE.into(),
             Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
             Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
             Self::Verilog | Self::SystemVerilog => tree_sitter_verilog::LANGUAGE.into(),
             Self::Vhdl => tree_sitter_vhdl::LANGUAGE.into(),
             Self::Python => unreachable!("Python uses RustPython"),
@@ -79,6 +82,7 @@ impl std::fmt::Display for Language {
             Self::C => "c",
             Self::Cpp => "cpp",
             Self::CSharp => "csharp",
+            Self::Rust => "rust",
             Self::Verilog => "verilog",
             Self::SystemVerilog => "system_verilog",
             Self::Vhdl => "vhdl",

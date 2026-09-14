@@ -1,12 +1,12 @@
 # Dowsing Rod
 
-Dowsing Rod finds structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Verilog, SystemVerilog, and VHDL. It is a Rust-native scanner with a standalone CLI and Python bindings, built for spotting duplicated flows, repeated procedural logic, adapter/strategy candidates, validation helpers, and other code shapes that ordinary text duplicate detectors miss.
+Dowsing Rod finds structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Rust, Verilog, SystemVerilog, and VHDL. It is a Rust-native scanner with a standalone CLI and Python bindings, built for spotting duplicated flows, repeated procedural logic, adapter/strategy candidates, validation helpers, and other code shapes that ordinary text duplicate detectors miss.
 
 It works offline. Source code is parsed locally, normalized locally, and rendered locally.
 
 ## Status
 
-`0.2.1` adds conservative HDL handling: procedural blocks are never refactoring candidates, and UVM-style SystemVerilog headers are recovered for discovery. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
+`0.3.0` adds native Rust scanning: functions, impl and trait methods with bodies, closures, and async fn. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
 
 ## Install
 
@@ -89,7 +89,7 @@ dowsing-rod scan . --format jsonl
 ## Example Human Output
 
 ```text
-Dowsing Rod v0.2.1
+Dowsing Rod v0.3.0
 
 Repository Summary
   Path:            /repo
@@ -116,7 +116,7 @@ Refactoring Opportunities
 ## Example AI Output
 
 ```text
-DOWSING-ROD v0.2.1
+DOWSING-ROD v0.3.0
 SCHEMA 1.1
 REPO /repo files=42 functions=318 tokens~48120
 SCAN clusters=9 high_value=3 duration=184ms
@@ -211,7 +211,7 @@ The core pipeline is:
 
 ```text
 discover supported source files
-parse Python with RustPython and other languages with embedded Tree-sitter grammars
+parse Python with RustPython and JavaScript, TypeScript, C, C++, C#, Rust, Verilog, SystemVerilog, and VHDL with embedded Tree-sitter grammars
 extract functions, methods, lambdas, HDL tasks/functions, and HDL procedural blocks
 normalize scoped structure while preserving calls, member access, operators, literals, and HDL timing/assignment syntax
 fingerprint normalized tokens

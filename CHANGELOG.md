@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - Unreleased
+
+### Added
+
+- Native structural analysis for Rust: functions, impl and trait methods with bodies, nested functions, closures, and async fn.
+- Normalization of Rust control flow (`if`/`match`/`loop`/`while`/`for`/`?`), `self` vs locals, destructured bindings, path call names, and macro invocations.
+
 ## [0.2.0] - Unreleased
 
 ### Added

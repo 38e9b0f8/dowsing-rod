@@ -15,14 +15,15 @@ fn all_languages_extract_and_find_known_duplicates() {
         ..Default::default()
     })
     .unwrap();
-    assert_eq!(result.statistics.files_scanned, 9);
-    assert_eq!(result.statistics.functions_found, 30);
+    assert_eq!(result.statistics.files_scanned, 10);
+    assert_eq!(result.statistics.functions_found, 37);
     for language in [
         Language::TypeScript,
         Language::JavaScript,
         Language::C,
         Language::Cpp,
         Language::CSharp,
+        Language::Rust,
     ] {
         assert!(
             result
@@ -67,12 +68,12 @@ fn all_languages_extract_and_find_known_duplicates() {
 #[test]
 fn cross_language_pairs_are_never_generated() {
     let dir = tempfile::tempdir().unwrap();
-    for ext in ["c", "cpp"] {
-        fs::write(
-            dir.path().join(format!("same.{ext}")),
-            "int same(int x) { return x + 1; }",
-        )
-        .unwrap();
+    for (ext, source) in [
+        ("c", "int same(int x) { return x + 1; }"),
+        ("cpp", "int same(int x) { return x + 1; }"),
+        ("rs", "fn same(x: i32) -> i32 { x + 1 }"),
+    ] {
+        fs::write(dir.path().join(format!("same.{ext}")), source).unwrap();
     }
     let result = dowsing_core::scan(ScanConfig {
         path: dir.path().to_path_buf(),
@@ -80,7 +81,7 @@ fn cross_language_pairs_are_never_generated() {
         ..Default::default()
     })
     .unwrap();
-    assert_eq!(result.statistics.functions_found, 2);
+    assert_eq!(result.statistics.functions_found, 3);
     assert_eq!(result.statistics.candidate_pairs_generated, 0);
     assert!(result.clusters.is_empty());
 
@@ -100,7 +101,7 @@ fn cross_language_pairs_are_never_generated() {
         ..Default::default()
     })
     .unwrap();
-    assert_eq!(result.statistics.functions_found, 4);
+    assert_eq!(result.statistics.functions_found, 5);
     assert!(result.clusters.is_empty());
 }
 
@@ -155,7 +156,7 @@ fn discovery_handles_headers_extensions_and_exclusions() {
     let dir = tempfile::tempdir().unwrap();
     for (index, ext) in [
         "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "c", "h", "C", "cpp", "hpp", "cc",
-        "cxx", "cs", "v", "vh", "sv", "svh", "vhd", "vhdl", "py",
+        "cxx", "cs", "rs", "v", "vh", "sv", "svh", "vhd", "vhdl", "py",
     ]
     .into_iter()
     .enumerate()
@@ -170,9 +171,10 @@ fn discovery_handles_headers_extensions_and_exclusions() {
         dowsing_core::discovery::discover_source_files(dir.path(), &[], &[])
             .unwrap()
             .len(),
-        23
+        24
     );
     assert_eq!(Language::from_path(Path::new("a.C")), Some(Language::Cpp));
+    assert_eq!(Language::from_path(Path::new("a.rs")), Some(Language::Rust));
     assert_eq!(
         Language::from_path(Path::new("a.js")),
         Some(Language::JavaScript)

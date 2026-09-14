@@ -1,4 +1,4 @@
-"""Dowsing Rod — Structural refactoring intelligence for Python.
+"""Dowsing Rod — Structural refactoring intelligence for source code.
 
 Usage:
     import dowsing_rod

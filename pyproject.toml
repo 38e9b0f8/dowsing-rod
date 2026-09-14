@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "dowsing-rod"
-version = "0.2.1"
+version = "0.3.0"
 description = "Structural refactoring intelligence for source code — Rust-native, AI-ready"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Testing",
 ]
-keywords = ["refactoring", "static-analysis", "ai", "code-quality", "javascript", "typescript", "c", "cpp", "csharp", "verilog", "vhdl"]
+keywords = ["refactoring", "static-analysis", "ai", "code-quality", "javascript", "typescript", "c", "cpp", "csharp", "rust", "verilog", "vhdl"]
 
 [project.urls]
 Homepage = "https://github.com/38e9b0f8/dowsing-rod"

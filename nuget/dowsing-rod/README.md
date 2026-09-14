@@ -1,6 +1,6 @@
 # Dowsing Rod
 
-Find structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Verilog, SystemVerilog, and VHDL.
+Find structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Rust, Verilog, SystemVerilog, and VHDL.
 
 ```sh
 dotnet tool install --global dowsing-rod
