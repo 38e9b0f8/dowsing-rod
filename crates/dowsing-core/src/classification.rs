@@ -17,6 +17,18 @@ pub fn classify_cluster(
         );
     }
 
+    // HDL code is deliberately handled before generic duplicate/refactoring
+    // heuristics. Even identical-looking helpers can differ in elaboration,
+    // timing, widths, reset behavior, or synthesis results.
+    if members.iter().any(|member| member.language.is_hdl()) {
+        return (
+            RefactoringClassification::HdlReviewRequired,
+            0.0,
+            "Exact HDL structural match recorded for manual review. This is not a refactoring recommendation; verify clocks, resets, event/sensitivity controls, widths, assignments, resource mapping, timing, and simulation semantics."
+                .into(),
+        );
+    }
+
     // --- Near/exact duplicate ---
     if avg_similarity >= 0.97 && signals.ast >= 0.97 {
         return (
@@ -31,11 +43,6 @@ pub fn classify_cluster(
             avg_similarity,
             "Very high token and AST similarity — likely copy-pasted code.".to_string(),
         );
-    }
-
-    if members.iter().any(|member| member.language.is_hdl()) {
-        return (RefactoringClassification::GenericAbstractionCandidate, avg_similarity.min(0.85),
-            "Repeated HDL structure. Review timing, widths, reset behavior, and synthesis semantics before sharing logic.".into());
     }
 
     // --- Strategy candidate ---
@@ -237,5 +244,6 @@ pub fn classification_label(c: &RefactoringClassification) -> &'static str {
         RefactoringClassification::FactoryCandidate => "Factory candidate",
         RefactoringClassification::RegistryCandidate => "Registry candidate",
         RefactoringClassification::GenericAbstractionCandidate => "Abstraction candidate",
+        RefactoringClassification::HdlReviewRequired => "HDL review required",
     }
 }

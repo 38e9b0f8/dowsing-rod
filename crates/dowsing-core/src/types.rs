@@ -150,6 +150,10 @@ pub struct FunctionInfo {
     pub is_classmethod: bool,
     pub is_staticmethod: bool,
     pub is_async: bool,
+    /// True when a SystemVerilog header was recovered after unsupported UVM
+    /// syntax was removed for parsing. Recovered units are never clustered.
+    #[serde(default)]
+    pub parser_recovered: bool,
 }
 
 impl FunctionInfo {
@@ -380,6 +384,8 @@ pub enum RefactoringClassification {
     FactoryCandidate,
     RegistryCandidate,
     GenericAbstractionCandidate,
+    /// An exact HDL match retained for manual inspection, never an abstraction recommendation.
+    HdlReviewRequired,
 }
 
 impl std::fmt::Display for RefactoringClassification {
@@ -398,6 +404,7 @@ impl std::fmt::Display for RefactoringClassification {
             Self::FactoryCandidate => "factory_candidate",
             Self::RegistryCandidate => "registry_candidate",
             Self::GenericAbstractionCandidate => "generic_abstraction_candidate",
+            Self::HdlReviewRequired => "hdl_review_required",
         };
         write!(f, "{s}")
     }

@@ -1,7 +1,10 @@
 use crate::classification::classify_cluster;
 use crate::differences::{extract_common_pipeline, extract_differences};
 use crate::graph::SimilarityGraph;
-use crate::types::{Cluster, FunctionInfo, NormalizedFunction, SimilarityScore, SimilaritySignals};
+use crate::types::{
+    Cluster, FunctionInfo, FunctionKind, NormalizedFunction, RefactoringClassification,
+    SimilarityScore, SimilaritySignals,
+};
 use std::collections::HashMap;
 
 /// Maximum cluster size — prevents meaningless mega-clusters.
@@ -48,6 +51,10 @@ pub fn cluster_functions(
                 continue;
             }
 
+            if !is_reportable_hdl_component(&sub, functions, &norm_lookup) {
+                continue;
+            }
+
             cluster_counter += 1;
             let cluster_id = format!("C{cluster_counter}");
 
@@ -57,6 +64,42 @@ pub fn cluster_functions(
     }
 
     clusters
+}
+
+/// HDL procedural blocks are deliberately omitted: a shared clock/reset shape
+/// says nothing about whether sharing is safe. Other HDL units are retained
+/// only when their complete normalized forms match exactly, and are labelled
+/// as manual review rather than a refactoring opportunity.
+fn is_reportable_hdl_component(
+    members: &[usize],
+    functions: &[FunctionInfo],
+    normalized: &HashMap<usize, &NormalizedFunction>,
+) -> bool {
+    let infos: Vec<_> = members
+        .iter()
+        .filter_map(|&index| functions.get(index))
+        .collect();
+    if !infos.iter().any(|info| info.language.is_hdl()) {
+        return true;
+    }
+    if infos.len() != members.len()
+        || infos.iter().any(|info| {
+            !info.language.is_hdl()
+                || info.parser_recovered
+                || matches!(info.kind, FunctionKind::Process)
+        })
+    {
+        return false;
+    }
+
+    let Some(first) = normalized.get(&members[0]) else {
+        return false;
+    };
+    members.iter().skip(1).all(|member| {
+        normalized
+            .get(member)
+            .is_some_and(|candidate| candidate.tokens == first.tokens)
+    })
 }
 
 /// Build a Cluster from a set of function indices.
@@ -178,8 +221,11 @@ fn build_cluster(
 
     // Compute refactoring value score
     let cluster_size_factor = (members.len() as f64).log2().max(0.1);
-    let refactoring_value =
-        duplicated_tokens as f64 * average_similarity * confidence * cluster_size_factor;
+    let refactoring_value = if classification == RefactoringClassification::HdlReviewRequired {
+        0.0
+    } else {
+        duplicated_tokens as f64 * average_similarity * confidence * cluster_size_factor
+    };
 
     Cluster {
         id,
@@ -339,6 +385,7 @@ mod tests {
                 is_classmethod: false,
                 is_staticmethod: false,
                 is_async: false,
+                parser_recovered: false,
             })
             .collect();
         let normalized: Vec<NormalizedFunction> = (0..3)

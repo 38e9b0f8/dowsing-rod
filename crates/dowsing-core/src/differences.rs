@@ -89,7 +89,7 @@ fn find_different_elements(
     let unique_b: Vec<&&str> = calls_b.iter().filter(|c| !calls_a.contains(c)).collect();
 
     if !unique_a.is_empty() || !unique_b.is_empty() {
-        diffs.push("different function calls".to_string());
+        diffs.push(describe_difference("function calls", &unique_a, &unique_b));
     }
 
     // Find different attributes
@@ -119,7 +119,11 @@ fn find_different_elements(
     let unique_attrs_b: Vec<&&str> = attrs_b.iter().filter(|a| !attrs_a.contains(a)).collect();
 
     if !unique_attrs_a.is_empty() || !unique_attrs_b.is_empty() {
-        diffs.push("different attribute access".to_string());
+        diffs.push(describe_difference(
+            "attribute access",
+            &unique_attrs_a,
+            &unique_attrs_b,
+        ));
     }
 
     // Find different operators
@@ -166,9 +170,44 @@ fn find_different_elements(
         })
         .collect();
 
-    let unique_ext: Vec<&&str> = ext_a.iter().filter(|e| !ext_b.contains(e)).collect();
-    if !unique_ext.is_empty() {
-        diffs.push("different external references".to_string());
+    let unique_ext_a: Vec<&&str> = ext_a.iter().filter(|e| !ext_b.contains(e)).collect();
+    let unique_ext_b: Vec<&&str> = ext_b.iter().filter(|e| !ext_a.contains(e)).collect();
+    if !unique_ext_a.is_empty() || !unique_ext_b.is_empty() {
+        diffs.push(describe_difference(
+            "external references",
+            &unique_ext_a,
+            &unique_ext_b,
+        ));
+    }
+
+    let literals_a: Vec<&str> = tokens_a
+        .iter()
+        .filter_map(|token| match token {
+            StructuralToken::Literal(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .collect();
+    let literals_b: Vec<&str> = tokens_b
+        .iter()
+        .filter_map(|token| match token {
+            StructuralToken::Literal(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .collect();
+    let unique_literals_a: Vec<&&str> = literals_a
+        .iter()
+        .filter(|value| !literals_b.contains(value))
+        .collect();
+    let unique_literals_b: Vec<&&str> = literals_b
+        .iter()
+        .filter(|value| !literals_a.contains(value))
+        .collect();
+    if !unique_literals_a.is_empty() || !unique_literals_b.is_empty() {
+        diffs.push(describe_difference(
+            "literal values",
+            &unique_literals_a,
+            &unique_literals_b,
+        ));
     }
 
     // Deduplicate
@@ -176,6 +215,26 @@ fn find_different_elements(
     diffs.retain(|d| seen.insert(d.clone()));
 
     diffs
+}
+
+fn describe_difference(kind: &str, left: &[&&str], right: &[&&str]) -> String {
+    fn names(values: &[&&str]) -> String {
+        let mut unique: Vec<_> = values.iter().map(|value| **value).collect();
+        unique.sort_unstable();
+        unique.dedup();
+        let mut shown = unique.into_iter().take(3).collect::<Vec<_>>().join(", ");
+        if values.len() > 3 {
+            shown.push_str(", …");
+        }
+        shown
+    }
+
+    match (left.is_empty(), right.is_empty()) {
+        (false, false) => format!("{kind} differ: {} ↔ {}", names(left), names(right)),
+        (false, true) => format!("{kind} only in first member: {}", names(left)),
+        (true, false) => format!("{kind} only in second member: {}", names(right)),
+        (true, true) => unreachable!("describe_difference requires a difference"),
+    }
 }
 
 /// Compute the LCS (longest common subsequence) of two token sequences.
@@ -302,4 +361,34 @@ pub fn extract_common_pipeline(all_tokens: &[&[StructuralToken]]) -> Vec<String>
         .into_iter()
         .filter(|c| seen.insert(c.clone()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_external_references_and_literals_in_differences() {
+        let left = NormalizedFunction {
+            function_id: 0,
+            tokens: vec![
+                StructuralToken::ExternalName("scale_a".into()),
+                StructuralToken::Literal("16".into()),
+            ],
+        };
+        let right = NormalizedFunction {
+            function_id: 1,
+            tokens: vec![
+                StructuralToken::ExternalName("scale_b".into()),
+                StructuralToken::Literal("32".into()),
+            ],
+        };
+        let difference = extract_differences(&left, &right);
+        assert!(difference
+            .differences
+            .contains(&"external references differ: scale_a ↔ scale_b".into()));
+        assert!(difference
+            .differences
+            .contains(&"literal values differ: 16 ↔ 32".into()));
+    }
 }

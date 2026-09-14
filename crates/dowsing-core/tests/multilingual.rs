@@ -23,9 +23,6 @@ fn all_languages_extract_and_find_known_duplicates() {
         Language::C,
         Language::Cpp,
         Language::CSharp,
-        Language::Verilog,
-        Language::SystemVerilog,
-        Language::Vhdl,
     ] {
         assert!(
             result
@@ -41,6 +38,17 @@ fn all_languages_extract_and_find_known_duplicates() {
             .function_indices
             .iter()
             .all(|&i| result.functions[i].language == language));
+        if language.is_hdl() {
+            assert_eq!(
+                cluster.classification,
+                dowsing_core::types::RefactoringClassification::HdlReviewRequired
+            );
+            assert_eq!(cluster.refactoring_value, 0.0);
+        }
+        assert!(cluster
+            .function_indices
+            .iter()
+            .all(|&i| { result.functions[i].kind != FunctionKind::Process }));
     }
     assert_eq!(
         result
