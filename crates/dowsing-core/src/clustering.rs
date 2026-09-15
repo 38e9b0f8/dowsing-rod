@@ -1,10 +1,7 @@
 use crate::classification::classify_cluster;
 use crate::differences::{extract_common_pipeline, extract_differences};
 use crate::graph::SimilarityGraph;
-use crate::types::{
-    Cluster, FunctionInfo, FunctionKind, NormalizedFunction, RefactoringClassification,
-    SimilarityScore, SimilaritySignals,
-};
+use crate::types::{Cluster, FunctionInfo, NormalizedFunction, SimilarityScore, SimilaritySignals};
 use std::collections::HashMap;
 
 /// Maximum cluster size — prevents meaningless mega-clusters.
@@ -58,7 +55,14 @@ pub fn cluster_functions(
             cluster_counter += 1;
             let cluster_id = format!("C{cluster_counter}");
 
-            let cluster = build_cluster(cluster_id, sub, functions, &score_lookup, &norm_lookup);
+            let cluster = build_cluster(
+                cluster_id,
+                sub,
+                graph,
+                functions,
+                &score_lookup,
+                &norm_lookup,
+            );
             clusters.push(cluster);
         }
     }
@@ -66,50 +70,58 @@ pub fn cluster_functions(
     clusters
 }
 
-/// HDL procedural blocks are deliberately omitted: a shared clock/reset shape
-/// says nothing about whether sharing is safe. Other HDL units are retained
-/// only when their complete normalized forms match exactly, and are labelled
-/// as manual review rather than a refactoring opportunity.
+/// HDL source is extracted for discovery but intentionally omitted from
+/// refactoring clusters. Structural similarity does not model elaboration,
+/// clock domains, reset trees, widths, resource mapping, or timing semantics.
 fn is_reportable_hdl_component(
     members: &[usize],
     functions: &[FunctionInfo],
-    normalized: &HashMap<usize, &NormalizedFunction>,
+    _normalized: &HashMap<usize, &NormalizedFunction>,
 ) -> bool {
-    let infos: Vec<_> = members
-        .iter()
-        .filter_map(|&index| functions.get(index))
-        .collect();
-    if !infos.iter().any(|info| info.language.is_hdl()) {
-        return true;
-    }
-    if infos.len() != members.len()
-        || infos.iter().any(|info| {
-            !info.language.is_hdl()
-                || info.parser_recovered
-                || matches!(info.kind, FunctionKind::Process)
-        })
-    {
-        return false;
-    }
-
-    let Some(first) = normalized.get(&members[0]) else {
-        return false;
-    };
-    members.iter().skip(1).all(|member| {
-        normalized
-            .get(member)
-            .is_some_and(|candidate| candidate.tokens == first.tokens)
+    members.iter().all(|&index| {
+        functions
+            .get(index)
+            .is_some_and(|info| !info.language.is_hdl())
     })
 }
 
 /// Build a Cluster from a set of function indices.
 fn build_cluster(
     id: String,
-    members: Vec<usize>,
+    mut members: Vec<usize>,
+    graph: &SimilarityGraph,
     functions: &[FunctionInfo],
     score_lookup: &HashMap<(usize, usize), &SimilarityScore>,
     norm_lookup: &HashMap<usize, &NormalizedFunction>,
 ) -> Cluster {
+    let representative_pair = members
+        .iter()
+        .enumerate()
+        .flat_map(|(i, &a)| members[(i + 1)..].iter().map(move |&b| (a, b)))
+        .filter_map(|(a, b)| {
+            let weight = graph.edge_weight(a, b);
+            (weight > 0.0).then_some((a, b, weight))
+        })
+        .max_by(|left, right| {
+            left.2
+                .partial_cmp(&right.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.0.cmp(&left.0))
+                .then_with(|| right.1.cmp(&left.1))
+        });
+    if let Some((first, second, _)) = representative_pair {
+        let first_index = members
+            .iter()
+            .position(|member| *member == first)
+            .expect("representative belongs to cluster");
+        members.swap(0, first_index);
+        let second_index = members
+            .iter()
+            .position(|member| *member == second)
+            .expect("representative belongs to cluster");
+        members.swap(1, second_index);
+    }
+
     // Compute average pairwise similarity
     let mut total_sim = 0.0f64;
     let mut pair_count = 0usize;
@@ -126,7 +138,12 @@ fn build_cluster(
         for j in (i + 1)..members.len() {
             let a = members[i].min(members[j]);
             let b = members[i].max(members[j]);
-            if let Some(score) = score_lookup.get(&(a, b)) {
+            // Candidate pairs below the configured threshold do not belong to
+            // the cluster and must not dilute its reported evidence.
+            if graph.edge_weight(a, b) > 0.0 {
+                let Some(score) = score_lookup.get(&(a, b)) else {
+                    continue;
+                };
                 total_sim += score.overall;
                 total_signals.ast += score.signals.ast;
                 total_signals.tokens += score.signals.tokens;
@@ -171,7 +188,7 @@ fn build_cluster(
         .filter_map(|&idx| norm_lookup.get(&idx).map(|n| n.tokens.as_slice()))
         .collect();
 
-    // Extract differences between first two members (representative)
+    // The strongest connected pair is placed first for traceable differences.
     let (common_structure, differences) = if token_slices.len() >= 2 {
         let first = norm_lookup.get(&members[0]);
         let second = norm_lookup.get(&members[1]);
@@ -194,8 +211,8 @@ fn build_cluster(
     // Estimate duplicated tokens
     let member_tokens: usize = members
         .iter()
-        .filter_map(|&idx| functions.get(idx))
-        .map(|f| f.estimated_tokens())
+        .filter_map(|&idx| norm_lookup.get(&idx))
+        .map(|normalized| normalized.tokens.len())
         .sum();
 
     // Duplicated tokens = total - (what would remain after ideal refactor)
@@ -221,11 +238,8 @@ fn build_cluster(
 
     // Compute refactoring value score
     let cluster_size_factor = (members.len() as f64).log2().max(0.1);
-    let refactoring_value = if classification == RefactoringClassification::HdlReviewRequired {
-        0.0
-    } else {
-        duplicated_tokens as f64 * average_similarity * confidence * cluster_size_factor
-    };
+    let refactoring_value =
+        duplicated_tokens as f64 * average_similarity * confidence * cluster_size_factor;
 
     Cluster {
         id,
@@ -358,7 +372,11 @@ mod tests {
 
     #[test]
     fn test_basic_clustering() {
-        let scores = vec![make_score(0, 1, 0.90), make_score(1, 2, 0.85)];
+        let scores = vec![
+            make_score(0, 1, 0.90),
+            make_score(1, 2, 0.85),
+            make_score(0, 2, 0.10),
+        ];
         let graph = SimilarityGraph::build(3, &scores, 0.75);
         let functions: Vec<FunctionInfo> = (0..3)
             .map(|i| FunctionInfo {
@@ -391,11 +409,13 @@ mod tests {
         let normalized: Vec<NormalizedFunction> = (0..3)
             .map(|i| NormalizedFunction {
                 function_id: i,
-                tokens: vec![],
+                tokens: vec![crate::types::StructuralToken::Return],
             })
             .collect();
         let clusters = cluster_functions(&graph, &scores, &functions, &normalized);
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].function_indices.len(), 3);
+        assert!((clusters[0].average_similarity - 0.875).abs() < f64::EPSILON);
+        assert_eq!(clusters[0].duplicated_tokens_estimate, 1);
     }
 }

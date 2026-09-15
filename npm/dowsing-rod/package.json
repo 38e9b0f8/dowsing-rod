@@ -17,7 +17,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=18"
   },
   "optionalDependencies": {
     "dowsing-rod-native-darwin-arm64": "0.3.0",

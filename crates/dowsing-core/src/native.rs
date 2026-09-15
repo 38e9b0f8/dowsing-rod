@@ -2,10 +2,13 @@
 use crate::{language::Language, types::*, FileAnalysis};
 use anyhow::{Context, Result};
 use std::{
+    borrow::Cow,
     collections::{BTreeSet, HashMap},
     path::Path,
 };
 use tree_sitter::{Node, Parser, Tree};
+
+const MAX_PARSE_ERRORS_PER_FILE: usize = 20;
 
 pub(crate) fn analyze(
     source: &str,
@@ -13,39 +16,59 @@ pub(crate) fn analyze(
     language: Language,
     level: NormalizationLevel,
 ) -> Result<FileAnalysis> {
-    let (language, initial_tree) = select_grammar(source, path, language)?;
-    let mut recovered_source = None;
-    let mut tree = initial_tree;
-    if language == Language::SystemVerilog && tree.root_node().has_error() {
-        let recovered = sanitize_systemverilog_for_recovery(source);
-        let recovered_tree = parse_tree(&recovered, language.grammar(path))?;
-        if !recovered_tree.root_node().has_error() {
-            recovered_source = Some(recovered);
-            tree = recovered_tree;
-        }
+    let parser_input = if language == Language::Rust {
+        mask_rust_primitive_macros(source)
+    } else {
+        Cow::Borrowed(source)
+    };
+    let (language, initial_tree) = select_grammar(&parser_input, path, language)?;
+    if initial_tree.root_node().has_error()
+        && matches!(language, Language::Verilog | Language::SystemVerilog)
+    {
+        // Preprocessors and UVM/DPI syntax are valid HDL input but are outside
+        // the embedded grammar's useful coverage. Keep a conservative outline
+        // instead of emitting false syntax errors or scoring guessed ASTs.
+        return Ok(recover_verilog_outline(source, path, language));
     }
-    let parser_source = recovered_source.as_deref().unwrap_or(source);
-    let parser_recovered = recovered_source.is_some();
+    if initial_tree.root_node().has_error() && language == Language::Vhdl {
+        return Ok(recover_vhdl_outline(source, path));
+    }
+
+    let tree = initial_tree;
+    // Masking preserves byte offsets; extraction always reads the original source.
+    let parser_source = source;
+    let parser_recovered = false;
     let mut result = FileAnalysis::default();
+    let mut omitted_errors = 0usize;
+    let mut first_omitted_position = None;
     let mut pending = vec![tree.root_node()];
     while let Some(node) = pending.pop() {
         if node.is_error() || node.is_missing() {
-            result.parse_errors.push(ParseError {
-                file: path.to_path_buf(),
-                line: Some(node.start_position().row + 1),
-                column: Some(node.start_position().column + 1),
-                message: if node.is_missing() {
-                    format!("missing {}", node.kind())
-                } else {
-                    "unrecognized syntax".into()
-                },
-            });
+            // Macro token trees need not be standalone Rust syntax.
+            if language == Language::Rust && has_ancestor_kind(node, &["macro_invocation"]) {
+                continue;
+            }
+            if result.parse_errors.len() < MAX_PARSE_ERRORS_PER_FILE {
+                result.parse_errors.push(ParseError {
+                    file: path.to_path_buf(),
+                    line: Some(node.start_position().row + 1),
+                    column: Some(node.start_position().column + 1),
+                    message: if node.is_missing() {
+                        format!("missing {}", node.kind())
+                    } else {
+                        "unrecognized syntax".into()
+                    },
+                });
+            } else {
+                omitted_errors += 1;
+                first_omitted_position.get_or_insert(node.start_position());
+            }
             // One diagnostic per erroneous region, without floods from its children.
             continue;
         }
         if let Some(kind) = unit_kind(node, language) {
             // Error recovery can manufacture plausible functions. Only analyze intact units.
-            if !node.has_error() {
+            if !has_reportable_error(node, language) {
                 let (info, normalized) = extract(
                     node,
                     kind,
@@ -72,60 +95,422 @@ pub(crate) fn analyze(
         let children: Vec<_> = node.children(&mut cursor).collect();
         pending.extend(children.into_iter().rev());
     }
+    if omitted_errors > 0 {
+        let position = first_omitted_position.expect("an omitted error has a position");
+        result.parse_errors.push(ParseError {
+            file: path.to_path_buf(),
+            line: Some(position.row + 1),
+            column: Some(position.column + 1),
+            message: format!("{omitted_errors} additional parser diagnostics omitted"),
+        });
+    }
     Ok(result)
 }
 
-/// The bundled grammar parses standard SystemVerilog but does not accept some
-/// common UVM macro and subroutine forms. On a failed parse, retain declaration
-/// headers and blank only subroutine bodies and preprocessor lines. The result
-/// is used for discovery only; recovered units are excluded from clustering.
-fn sanitize_systemverilog_for_recovery(source: &str) -> String {
-    enum State {
-        Outside,
-        Header,
-        Body,
-    }
-
-    let mut state = State::Outside;
-    let mut sanitized = String::with_capacity(source.len());
-    for line in source.split_inclusive('\n') {
-        let content = line.strip_suffix('\n').unwrap_or(line);
-        let newline = if line.ends_with('\n') { "\n" } else { "" };
-        let trimmed = content.trim_start();
-        let starts_subroutine = trimmed.starts_with("function") || trimmed.starts_with("task");
-        let ends_subroutine = trimmed.starts_with("endfunction") || trimmed.starts_with("endtask");
-        let blank = |line: &str| {
-            line.chars()
-                .map(|character| if character == '\t' { '\t' } else { ' ' })
-                .collect::<String>()
-        };
-
-        match state {
-            State::Outside if trimmed.starts_with('`') => sanitized.push_str(&blank(content)),
-            State::Outside if starts_subroutine => {
-                sanitized.push_str(content);
-                state = if content.contains(';') {
-                    State::Body
-                } else {
-                    State::Header
-                };
-            }
-            State::Outside => sanitized.push_str(content),
-            State::Header => {
-                sanitized.push_str(content);
-                if content.contains(';') {
-                    state = State::Body;
-                }
-            }
-            State::Body if ends_subroutine => {
-                sanitized.push_str(content);
-                state = State::Outside;
-            }
-            State::Body => sanitized.push_str(&blank(content)),
+fn has_ancestor_kind(mut node: Node<'_>, kinds: &[&str]) -> bool {
+    while let Some(parent) = node.parent() {
+        if kinds.contains(&parent.kind()) {
+            return true;
         }
-        sanitized.push_str(newline);
+        node = parent;
     }
-    sanitized
+    false
+}
+
+fn has_reportable_error(root: Node<'_>, language: Language) -> bool {
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if node.is_error() || node.is_missing() {
+            if language != Language::Rust || !has_ancestor_kind(node, &["macro_invocation"]) {
+                return true;
+            }
+            continue;
+        }
+        let mut cursor = node.walk();
+        pending.extend(node.children(&mut cursor));
+    }
+    false
+}
+
+/// Tree-sitter-rust tokenizes primitive type names separately from identifiers,
+/// although Rust permits macros such as `str!`. Mask the first byte so the
+/// grammar recognizes the invocation while keeping every source offset stable.
+fn mask_rust_primitive_macros(source: &str) -> Cow<'_, str> {
+    const PRIMITIVES: &[&[u8]] = &[
+        b"str", b"bool", b"char", b"i8", b"i16", b"i32", b"i64", b"i128", b"isize", b"u8", b"u16",
+        b"u32", b"u64", b"u128", b"usize", b"f32", b"f64",
+    ];
+    let source_bytes = source.as_bytes();
+    let mut masked = None;
+    let mut index = 0usize;
+    while index < source_bytes.len() {
+        let at_boundary = index == 0
+            || !source_bytes[index - 1].is_ascii_alphanumeric() && source_bytes[index - 1] != b'_';
+        if at_boundary {
+            if let Some(primitive) = PRIMITIVES.iter().find(|primitive| {
+                source_bytes[index..].starts_with(primitive)
+                    && source_bytes
+                        .get(index + primitive.len())
+                        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_')
+                    && source_bytes[index + primitive.len()..]
+                        .iter()
+                        .find(|byte| !byte.is_ascii_whitespace())
+                        == Some(&b'!')
+            }) {
+                masked.get_or_insert_with(|| source_bytes.to_vec())[index] = b'_';
+                index += primitive.len();
+                continue;
+            }
+        }
+        index += 1;
+    }
+    match masked {
+        Some(bytes) => Cow::Owned(String::from_utf8(bytes).expect("masking preserves UTF-8")),
+        None => Cow::Borrowed(source),
+    }
+}
+
+/// Recover declarations from valid HDL which the embedded grammar cannot
+/// represent. These entries deliberately have no normalized form or
+/// fingerprint, so they contribute to discovery statistics but never to
+/// candidate generation or clustering.
+fn recover_verilog_outline(source: &str, path: &Path, language: Language) -> FileAnalysis {
+    let lines: Vec<_> = source
+        .split_inclusive('\n')
+        .scan(0usize, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .collect();
+    let mut result = FileAnalysis::default();
+    let mut class_scopes = Vec::new();
+    let mut in_macro = false;
+    let mut in_block_comment = false;
+    let mut line_index = 0;
+
+    while line_index < lines.len() {
+        let (start_byte, line) = lines[line_index];
+        let trimmed = line.trim_start();
+        if in_macro || trimmed.starts_with('`') {
+            in_macro = trimmed.trim_end().ends_with('\\');
+            line_index += 1;
+            continue;
+        }
+        let stripped = strip_verilog_line(line, &mut in_block_comment);
+        if stripped.is_empty() {
+            line_index += 1;
+            continue;
+        }
+        if let Some(name) = class_name(&stripped) {
+            class_scopes.push(name.to_string());
+        }
+        if starts_word(&stripped, "endclass") {
+            class_scopes.pop();
+        }
+
+        if let Some(kind) = subroutine_kind(&stripped) {
+            let name = subroutine_name(&stripped).unwrap_or_else(|| {
+                format!(
+                    "{}@{}",
+                    if kind == FunctionKind::Task {
+                        "task"
+                    } else {
+                        "function"
+                    },
+                    line_index + 1
+                )
+            });
+            let closing = if kind == FunctionKind::Task {
+                "endtask"
+            } else {
+                "endfunction"
+            };
+            let Some(end_index) = find_verilog_end(&lines, line_index, closing) else {
+                // DPI imports, extern declarations, and prototypes have no
+                // local body to inventory.
+                line_index += 1;
+                continue;
+            };
+            result.functions.push(recovered_info(
+                path,
+                language,
+                kind,
+                name,
+                &class_scopes,
+                line_index + 1,
+                end_index + 1,
+                start_byte,
+                lines[end_index].0 + lines[end_index].1.len(),
+            ));
+            line_index = end_index + 1;
+            continue;
+        }
+
+        if let Some(kind) = procedural_kind(&stripped) {
+            result.functions.push(recovered_info(
+                path,
+                language,
+                kind,
+                format!("process@{}", line_index + 1),
+                &class_scopes,
+                line_index + 1,
+                line_index + 1,
+                start_byte,
+                start_byte + line.len(),
+            ));
+        }
+        line_index += 1;
+    }
+    result
+}
+
+fn strip_verilog_line(line: &str, in_block_comment: &mut bool) -> String {
+    let mut code = String::with_capacity(line.len());
+    let mut remaining = line;
+    while !remaining.is_empty() {
+        if *in_block_comment {
+            let Some(end) = remaining.find("*/") else {
+                break;
+            };
+            *in_block_comment = false;
+            remaining = &remaining[end + 2..];
+            continue;
+        }
+        let block = remaining.find("/*");
+        let line_comment = remaining.find("//");
+        match (block, line_comment) {
+            (None, Some(line_comment)) => {
+                code.push_str(&remaining[..line_comment]);
+                break;
+            }
+            (Some(block), Some(line_comment)) if line_comment < block => {
+                code.push_str(&remaining[..line_comment]);
+                break;
+            }
+            (Some(block), _) => {
+                code.push_str(&remaining[..block]);
+                *in_block_comment = true;
+                remaining = &remaining[block + 2..];
+            }
+            (None, None) => {
+                code.push_str(remaining);
+                break;
+            }
+        }
+    }
+    code.trim_start().to_string()
+}
+
+fn starts_word(line: &str, word: &str) -> bool {
+    line.strip_prefix(word)
+        .is_some_and(|rest| rest.is_empty() || !is_identifier_byte(rest.as_bytes()[0]))
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+}
+
+fn keyword_at(line: &str, word: &str) -> Option<usize> {
+    line.match_indices(word).find_map(|(index, _)| {
+        let bytes = line.as_bytes();
+        let before = index.checked_sub(1).and_then(|i| bytes.get(i));
+        let after = bytes.get(index + word.len());
+        (!before.is_some_and(|byte| is_identifier_byte(*byte))
+            && !after.is_some_and(|byte| is_identifier_byte(*byte)))
+        .then_some(index)
+    })
+}
+
+fn subroutine_kind(line: &str) -> Option<FunctionKind> {
+    if keyword_at(line, "function").is_some() {
+        Some(FunctionKind::Function)
+    } else if keyword_at(line, "task").is_some() {
+        Some(FunctionKind::Task)
+    } else {
+        None
+    }
+}
+
+fn subroutine_name(line: &str) -> Option<String> {
+    let keyword = ["function", "task"]
+        .into_iter()
+        .filter_map(|word| keyword_at(line, word).map(|index| (index, word.len())))
+        .min_by_key(|(index, _)| *index)?;
+    let declaration = &line[keyword.0 + keyword.1..];
+    let before_arguments = declaration
+        .split_once('(')
+        .map_or(declaration, |(before, _)| before);
+    let head = before_arguments
+        .split_once(';')
+        .map_or(before_arguments, |(before, _)| before);
+    let name = head
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || character == '_' || character == '$')
+        })
+        .rfind(|part| !part.is_empty())?;
+    Some(name.to_string())
+}
+
+fn class_name(line: &str) -> Option<&str> {
+    let index = keyword_at(line, "class")?;
+    line[index + "class".len()..]
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || character == '_' || character == '$')
+        })
+        .find(|part| !part.is_empty())
+}
+
+fn procedural_kind(line: &str) -> Option<FunctionKind> {
+    ["always", "always_ff", "always_comb", "always_latch"]
+        .into_iter()
+        .any(|word| starts_word(line, word))
+        .then_some(FunctionKind::Process)
+}
+
+fn find_verilog_end(lines: &[(usize, &str)], start: usize, ending: &str) -> Option<usize> {
+    let mut in_macro = false;
+    let mut in_block_comment = false;
+    for (index, (_, line)) in lines.iter().enumerate().skip(start + 1) {
+        let trimmed = line.trim_start();
+        if in_macro || trimmed.starts_with('`') {
+            in_macro = trimmed.trim_end().ends_with('\\');
+            continue;
+        }
+        let stripped = strip_verilog_line(line, &mut in_block_comment);
+        if starts_word(&stripped, ending) {
+            return Some(index);
+        }
+        if subroutine_kind(&stripped).is_some() {
+            return None;
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recovered_info(
+    path: &Path,
+    language: Language,
+    kind: FunctionKind,
+    name: String,
+    scopes: &[String],
+    start_line: usize,
+    end_line: usize,
+    start_byte: usize,
+    end_byte: usize,
+) -> FunctionInfo {
+    let mut qualified = scopes.to_vec();
+    qualified.push(name.clone());
+    FunctionInfo {
+        language,
+        file: path.to_path_buf(),
+        module: path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        qualified_name: qualified.join("::"),
+        class_name: scopes.last().cloned(),
+        function_name: name.clone(),
+        kind,
+        start_line,
+        end_line,
+        source_bytes: end_byte.saturating_sub(start_byte),
+        ast_node_count: 0,
+        complexity: 0,
+        decorators: Vec::new(),
+        parameters: Vec::new(),
+        return_annotation: None,
+        called_functions: BTreeSet::new(),
+        is_public: !name.starts_with('_'),
+        is_dunder: false,
+        is_test: false,
+        is_property: false,
+        is_classmethod: false,
+        is_staticmethod: false,
+        is_async: false,
+        parser_recovered: true,
+    }
+}
+
+fn recover_vhdl_outline(source: &str, path: &Path) -> FileAnalysis {
+    let lines: Vec<_> = source
+        .split_inclusive('\n')
+        .scan(0usize, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .collect();
+    let mut result = FileAnalysis::default();
+    let mut line_index = 0;
+    while line_index < lines.len() {
+        let (start_byte, line) = lines[line_index];
+        let stripped = strip_vhdl_line(line);
+        if let Some((kind, keyword)) = vhdl_unit_kind(stripped) {
+            let name = vhdl_unit_name(stripped, keyword)
+                .unwrap_or_else(|| format!("{}@{}", keyword, line_index + 1));
+            let ending = match kind {
+                FunctionKind::Procedure => "procedure",
+                FunctionKind::Process => "process",
+                _ => "function",
+            };
+            let end_index = find_vhdl_end(&lines, line_index, ending).unwrap_or(line_index);
+            result.functions.push(recovered_info(
+                path,
+                Language::Vhdl,
+                kind,
+                name,
+                &[],
+                line_index + 1,
+                end_index + 1,
+                start_byte,
+                lines[end_index].0 + lines[end_index].1.len(),
+            ));
+            line_index = end_index + 1;
+            continue;
+        }
+        line_index += 1;
+    }
+    result
+}
+
+fn strip_vhdl_line(line: &str) -> &str {
+    line.split_once("--")
+        .map_or(line, |(content, _)| content)
+        .trim_start()
+}
+
+fn vhdl_unit_kind(line: &str) -> Option<(FunctionKind, &'static str)> {
+    if keyword_at(line, "function").is_some() {
+        Some((FunctionKind::Function, "function"))
+    } else if keyword_at(line, "procedure").is_some() {
+        Some((FunctionKind::Procedure, "procedure"))
+    } else if keyword_at(line, "process").is_some() {
+        Some((FunctionKind::Process, "process"))
+    } else {
+        None
+    }
+}
+
+fn vhdl_unit_name(line: &str, keyword: &str) -> Option<String> {
+    let index = keyword_at(line, keyword)?;
+    line[index + keyword.len()..]
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn find_vhdl_end(lines: &[(usize, &str)], start: usize, kind: &str) -> Option<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(index, (_, line))| {
+            let line = strip_vhdl_line(line).to_ascii_lowercase();
+            (starts_word(&line, "end") && keyword_at(&line, kind).is_some()).then_some(index)
+        })
 }
 
 /// `.h` is inherently ambiguous. Parse it as both C and C++ and keep the
@@ -1033,17 +1418,24 @@ mod tests {
     #[test]
     fn errors_skip_broken_units_but_keep_valid_siblings() {
         for (ext, source) in [
-            ("ts", "function good(x: number) { return x; } function broken( {"),
+            (
+                "ts",
+                "function good(x: number) { return x; } function broken( {",
+            ),
             ("c", "int good(int x) { return x; } int broken( {"),
             ("cpp", "int good(int x) { return x; } int broken( {"),
-            ("cs", "class A { int Good(int x) { return x; } int Broken( { }"),
+            (
+                "cs",
+                "class A { int Good(int x) { return x; } int Broken( { }",
+            ),
             ("rs", "fn good(x: i32) -> i32 { x } fn broken( {"),
-            ("sv", "module m; function int good(int x); return x; endfunction always_ff @( begin endmodule"),
-            ("vhd", "package body p is function good(x: integer) return integer is begin return x; end function; function broken( end package body;"),
         ] {
             let r = run(source, ext, NormalizationLevel::Balanced);
             assert!(!r.parse_errors.is_empty(), "{ext}");
-            assert!(r.parse_errors.iter().all(|e| e.line.is_some() && e.column.is_some()));
+            assert!(r
+                .parse_errors
+                .iter()
+                .all(|e| e.line.is_some() && e.column.is_some()));
         }
         let r = run(
             "function good(x: number) { return x; } function broken(x: number) { return x + ; }",
@@ -1052,6 +1444,43 @@ mod tests {
         );
         assert_eq!(r.functions.len(), 1);
         assert_eq!(r.functions[0].function_name, "good");
+    }
+    #[test]
+    fn hdl_fallback_is_discovery_only() {
+        for (extension, source) in [
+            (
+                "svh",
+                "class item;\nvirtual task drive();\n`uvm_info(\"I\", \"go\", UVM_LOW)\nendtask\nendclass",
+            ),
+            (
+                "vhd",
+                "architecture rtl of fifo is begin checks : block begin assert always ready; end block; process(clk) begin end process; end architecture;",
+            ),
+        ] {
+            let result = run(source, extension, NormalizationLevel::Balanced);
+            assert!(result.parse_errors.is_empty(), "{extension}");
+            assert!(!result.functions.is_empty(), "{extension}");
+            assert!(result.normalized.is_empty(), "{extension}");
+            assert!(result
+                .functions
+                .iter()
+                .all(|function| function.parser_recovered));
+        }
+    }
+
+    #[test]
+    fn recovered_systemverilog_skips_macros_and_dpi_declarations() {
+        let source = r#"`define DECLARE_HELPER \
+function void generated(); endfunction
+import "DPI-C" function void foreign_call();
+function void local_helper();
+endfunction
+"#;
+        let result = run(source, "sv", NormalizationLevel::Balanced);
+        assert!(result.parse_errors.is_empty());
+        assert_eq!(result.functions.len(), 1);
+        assert_eq!(result.functions[0].function_name, "local_helper");
+        assert!(result.functions[0].parser_recovered);
     }
     #[test]
     fn nested_bodies_do_not_pollute_parent_calls() {
@@ -1131,6 +1560,29 @@ mod tests {
         );
         assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
     }
+
+    #[test]
+    fn rust_macro_token_trees_do_not_emit_syntax_errors() {
+        for source in [
+            r##"fn check() { snap![[r#"arbitrary macro input"#]]; }"##,
+            r#"fn check() { let value = str!["1.43.0-beta.1"]; }"#,
+        ] {
+            let r = run(source, "rs", NormalizationLevel::Balanced);
+            assert!(r.parse_errors.is_empty(), "{source}");
+            assert_eq!(r.functions.len(), 1);
+        }
+    }
+
+    #[test]
+    fn parser_diagnostics_are_bounded_per_file() {
+        let source = "int = ;\n".repeat(100);
+        let r = run(&source, "c", NormalizationLevel::Balanced);
+        assert_eq!(r.parse_errors.len(), MAX_PARSE_ERRORS_PER_FILE + 1);
+        assert!(r.parse_errors.last().is_some_and(|error| error
+            .message
+            .contains("additional parser diagnostics omitted")));
+    }
+
     #[test]
     fn rust_nested_fn_does_not_pollute_parent_calls() {
         let r = run(

@@ -25,12 +25,12 @@ jobs:
           - { runner: windows-2022, platform: win32-x64, rust_target: x86_64-pc-windows-msvc, artifact_target: x86_64-pc-windows-msvc, builder: cargo, static_crt: true, suffix: '.exe' }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
           components: rustfmt, clippy
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
       - uses: Swatinem/rust-cache@v2
@@ -74,7 +74,7 @@ jobs:
       - name: Pack launcher once
         if: matrix.platform == 'linux-x64'
         run: npm pack ./dist/npm/dowsing-rod --pack-destination dist/tarballs --ignore-scripts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: npm-${{ matrix.platform }}
           path: dist/tarballs/*.tgz
@@ -89,8 +89,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
@@ -98,7 +98,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node -e 'const v=require("./npm/dowsing-rod/package.json").version; if(process.env.RELEASE_TAG !== `v${v}`) process.exit(1)'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: npm-*
           path: dist/tarballs
@@ -108,8 +108,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          VERSION="$(node -p 'require("./npm/dowsing-rod/package.json").version')"
           test "$(find dist/tarballs -name '*.tgz' | wc -l)" -eq 6
+          test "$(find dist/tarballs -name 'dowsing-rod-native-*.tgz' | wc -l)" -eq 5
+          test -f "dist/tarballs/dowsing-rod-${VERSION}.tgz"
           for package in dist/tarballs/dowsing-rod-native-*.tgz; do
             npm publish "$package" --access public --provenance
           done
-          npm publish dist/tarballs/dowsing-rod-*.tgz --access public --provenance
+          npm publish "dist/tarballs/dowsing-rod-${VERSION}.tgz" --access public --provenance

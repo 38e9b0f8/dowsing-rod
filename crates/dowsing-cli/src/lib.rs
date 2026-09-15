@@ -54,12 +54,12 @@ enum Commands {
         #[arg(long, short = 'j')]
         jobs: Option<usize>,
 
-        /// Additional path patterns to exclude.
-        #[arg(long)]
+        /// Additional path patterns to exclude (space- or comma-separated).
+        #[arg(long, num_args = 1.., value_delimiter = ',')]
         exclude: Vec<String>,
 
-        /// Path patterns to include (overrides exclude).
-        #[arg(long)]
+        /// Scan only these path patterns (space- or comma-separated; overrides exclude).
+        #[arg(long, num_args = 1.., value_delimiter = ',')]
         include: Vec<String>,
 
         /// Disable the file cache.
@@ -172,4 +172,33 @@ pub fn run_cli_from(args: Vec<String>) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn include_and_exclude_accept_space_or_comma_separated_patterns() {
+        let cli = Cli::try_parse_from([
+            "dowsing-rod",
+            "scan",
+            ".",
+            "--include",
+            "rtl",
+            "tb,uvm",
+            "--exclude",
+            "vendor,generated",
+            "examples",
+        ])
+        .unwrap();
+        let Commands::Scan {
+            include, exclude, ..
+        } = cli.command
+        else {
+            panic!("expected scan command");
+        };
+        assert_eq!(include, ["rtl", "tb", "uvm"]);
+        assert_eq!(exclude, ["vendor", "generated", "examples"]);
+    }
 }

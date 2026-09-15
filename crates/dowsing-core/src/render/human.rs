@@ -76,8 +76,15 @@ pub fn render<W: Write>(result: &ScanResult, writer: &mut W) -> std::io::Result<
     if !result.parse_errors.is_empty() {
         write_styled(writer, is_tty, "\x1b[1;33m", "  ⚠ Parse Errors")?;
         writeln!(writer)?;
-        for err in &result.parse_errors {
+        for err in result.parse_errors.iter().take(20) {
             writeln!(writer, "    {err}")?;
+        }
+        if result.parse_errors.len() > 20 {
+            writeln!(
+                writer,
+                "    ... {} more diagnostics omitted; use JSON for details",
+                result.parse_errors.len() - 20
+            )?;
         }
         writeln!(writer)?;
     }
@@ -195,16 +202,12 @@ pub fn render<W: Write>(result: &ScanResult, writer: &mut W) -> std::io::Result<
         )?;
 
         // Estimates
-        if cluster.classification == crate::types::RefactoringClassification::HdlReviewRequired {
-            writeln!(writer, "    Manual review only; no reduction estimate.")?;
-        } else {
-            writeln!(
-                writer,
-                "    Duplicated tokens: ~{}  |  Potential reduction: ~{}",
-                format_number(cluster.duplicated_tokens_estimate),
-                format_number(cluster.potential_reduction_estimate),
-            )?;
-        }
+        writeln!(
+            writer,
+            "    Duplicated tokens: ~{}  |  Potential reduction: ~{}",
+            format_number(cluster.duplicated_tokens_estimate),
+            format_number(cluster.potential_reduction_estimate),
+        )?;
 
         // Reason
         writeln!(writer)?;

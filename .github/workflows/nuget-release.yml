@@ -25,12 +25,12 @@ jobs:
           - { runner: windows-2022, rid: win-x64, rust_target: x86_64-pc-windows-msvc, artifact_target: x86_64-pc-windows-msvc, builder: cargo, static_crt: true, suffix: '.exe' }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
           components: rustfmt, clippy
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
       - uses: Swatinem/rust-cache@v2
@@ -61,25 +61,40 @@ jobs:
           REQUIRED="$(readelf --version-info target/${{ matrix.artifact_target }}/release/dowsing-rod | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n1)"
           test "$REQUIRED" = "GLIBC_2.17"
       - run: node scripts/package-nuget.mjs ${{ matrix.rid }} target/${{ matrix.artifact_target }}/release/dowsing-rod${{ matrix.suffix }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: nuget-native-${{ matrix.rid }}
-          path: dist/nuget-native/${{ matrix.rid }}
+          path: dist/nuget-native/${{ matrix.rid }}/dowsing-rod${{ matrix.suffix }}
           if-no-files-found: error
 
   package:
     needs: native
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          pattern: nuget-native-*
-          path: nuget/dowsing-rod/native
-          merge-multiple: true
+          name: nuget-native-osx-arm64
+          path: nuget/dowsing-rod/native/osx-arm64
+      - uses: actions/download-artifact@v7
+        with:
+          name: nuget-native-osx-x64
+          path: nuget/dowsing-rod/native/osx-x64
+      - uses: actions/download-artifact@v7
+        with:
+          name: nuget-native-linux-arm64
+          path: nuget/dowsing-rod/native/linux-arm64
+      - uses: actions/download-artifact@v7
+        with:
+          name: nuget-native-linux-x64
+          path: nuget/dowsing-rod/native/linux-x64
+      - uses: actions/download-artifact@v7
+        with:
+          name: nuget-native-win-x64
+          path: nuget/dowsing-rod/native/win-x64
       - name: Check staged native binaries
         run: |
           test -f nuget/dowsing-rod/native/osx-arm64/dowsing-rod
@@ -95,7 +110,7 @@ jobs:
           dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: nuget-package
           path: dist/nuget/*.nupkg
@@ -110,8 +125,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
       - name: Check tag matches package version
@@ -120,7 +135,7 @@ jobs:
         run: |
           VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' nuget/Directory.Build.props)"
           test "$RELEASE_TAG" = "v$VERSION"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: nuget-package
           path: dist/nuget
@@ -128,6 +143,6 @@ jobs:
         uses: NuGet/login@v1
         id: nuget-login
         with:
-          user: ${{ secrets.NUGET_USER }}
+          user: 38e9b0f8
       - name: Publish to NuGet
         run: dotnet nuget push dist/nuget/*.nupkg --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

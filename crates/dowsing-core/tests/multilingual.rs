@@ -39,13 +39,7 @@ fn all_languages_extract_and_find_known_duplicates() {
             .function_indices
             .iter()
             .all(|&i| result.functions[i].language == language));
-        if language.is_hdl() {
-            assert_eq!(
-                cluster.classification,
-                dowsing_core::types::RefactoringClassification::HdlReviewRequired
-            );
-            assert_eq!(cluster.refactoring_value, 0.0);
-        }
+        assert!(!language.is_hdl());
         assert!(cluster
             .function_indices
             .iter()

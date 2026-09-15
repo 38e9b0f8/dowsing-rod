@@ -1,4 +1,4 @@
-use crate::types::{Cluster, RefactoringClassification, ScanConfig};
+use crate::types::{Cluster, ScanConfig};
 
 /// Sort clusters by refactoring value (highest first) and assign final IDs.
 ///
@@ -40,11 +40,7 @@ pub fn apply_limits(clusters: &mut Vec<Cluster>, config: &ScanConfig) {
 pub fn count_high_value(clusters: &[Cluster]) -> usize {
     clusters
         .iter()
-        .filter(|c| {
-            c.classification != RefactoringClassification::HdlReviewRequired
-                && c.average_similarity >= 0.85
-                && c.duplicated_tokens_estimate >= 500
-        })
+        .filter(|c| c.average_similarity >= 0.85 && c.duplicated_tokens_estimate >= 500)
         .count()
 }
 
@@ -52,11 +48,7 @@ pub fn count_high_value(clusters: &[Cluster]) -> usize {
 pub fn count_strong_signals(clusters: &[Cluster]) -> usize {
     clusters
         .iter()
-        .filter(|c| {
-            c.classification != RefactoringClassification::HdlReviewRequired
-                && c.average_similarity >= 0.80
-                && c.duplicated_tokens_estimate >= 200
-        })
+        .filter(|c| c.average_similarity >= 0.80 && c.duplicated_tokens_estimate >= 200)
         .count()
 }
 

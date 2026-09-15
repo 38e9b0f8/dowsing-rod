@@ -6,7 +6,7 @@ It works offline. Source code is parsed locally, normalized locally, and rendere
 
 ## Status
 
-`0.3.0` adds native Rust scanning: functions, impl and trait methods with bodies, closures, and async fn. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
+`0.3.0` adds native Rust scanning and keeps HDL discovery conservative: Verilog, SystemVerilog, and VHDL units are never refactoring candidates. Preprocessed, UVM/DPI, and newer VHDL syntax recover as an outline for discovery. Parsing, normalization, scoring, caching, and rendering remain local.
 
 ## Install
 
@@ -156,10 +156,16 @@ Scan options:
 --max-tokens N               Token budget for AI output
 --normalization LEVEL        strict, balanced, or aggressive
 --jobs N                     Rayon worker thread count
---exclude PATTERN            Additional ignore pattern, repeatable
---include PATTERN            Inclusion override, repeatable
+--exclude PATTERN...         Additional ignore patterns, space- or comma-separated
+--include PATTERN...         Scan only matching paths, space- or comma-separated
 --no-cache                   Disable the file analysis cache
 --fail-on-error              Return an error when any file fails to parse
+```
+
+For several source areas, use either form:
+
+```bash
+dowsing-rod scan . --include rtl tb uvm --exclude vendor,generated
 ```
 
 ## Python API
@@ -225,7 +231,7 @@ render human, AI, JSON, or JSONL output
 
 Normalization is deliberately semantic enough to avoid the most obvious false positives. Calls, member access, operators, control flow, literals, parameter shape, and complexity all contribute to the score. Clusters are isolated by language; JavaScript and TypeScript are separate languages.
 
-HDL is deliberately conservative. `always` and `process` blocks are extracted but never reported as refactoring candidates. Functions, tasks, and procedures appear only for exact structural matches, as `hdl_review_required` with no reduction estimate. Treat those as a prompt to inspect clocks, resets, event/sensitivity controls, widths, assignment style, resource mapping, timing, and simulation semantics. UVM-style `.svh` headers are recovered for discovery when the embedded grammar cannot parse their macros; recovered units are never clustered.
+HDL is discovery-only. The scanner extracts `always`/`process` blocks, functions, tasks, and procedures, but emits no HDL refactoring clusters. It does not model clock domains, reset trees, widths, elaboration, resource mapping, timing, or simulation semantics. If the embedded grammar cannot represent a Verilog, SystemVerilog, or VHDL file, Dowsing Rod records local declarations as an outline; macro expansions and foreign DPI declarations are omitted. Recovered units are never normalized, scored, or clustered. Use your simulator, linter, or synthesizer for HDL syntax and semantic validation.
 
 See [docs/algorithms.md](docs/algorithms.md) for implementation details.
 

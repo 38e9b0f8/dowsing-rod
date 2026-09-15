@@ -39,6 +39,7 @@ use types::*;
 
 /// Tool version string.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_REPORTED_PARSE_ERRORS: usize = 200;
 
 /// Schema version for output compatibility.
 pub const SCHEMA_VERSION: &str = "1.1";
@@ -90,6 +91,7 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
     let cache_hits = AtomicUsize::new(0);
     let cache_misses = AtomicUsize::new(0);
     let files_with_errors = AtomicUsize::new(0);
+    let total_source_bytes = AtomicUsize::new(0);
 
     let per_file_results: Vec<FileAnalysis> = files
         .par_iter()
@@ -101,6 +103,7 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
                     return FileAnalysis::error(file_path, error.to_string());
                 }
             };
+            total_source_bytes.fetch_add(content.len(), Ordering::Relaxed);
             if let Some(cached) = cache
                 .as_ref()
                 .and_then(|c| c.load(file_path, &content, config.normalization))
@@ -172,14 +175,32 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
     if config.fail_on_error && !all_errors.is_empty() {
         let summary = all_errors
             .iter()
+            .take(20)
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        anyhow::bail!("parse errors encountered:\n{summary}");
+        let omitted = all_errors.len().saturating_sub(20);
+        if omitted == 0 {
+            anyhow::bail!("parse errors encountered:\n{summary}");
+        }
+        anyhow::bail!(
+            "parse errors encountered:\n{summary}\n... {omitted} more diagnostics omitted"
+        );
     }
 
-    let total_source_bytes: usize = all_functions.iter().map(|f| f.source_bytes).sum();
-    let estimated_source_tokens = tokens::estimate_repository_tokens(&all_functions);
+    if all_errors.len() > MAX_REPORTED_PARSE_ERRORS {
+        let omitted = all_errors.len() - MAX_REPORTED_PARSE_ERRORS;
+        all_errors.truncate(MAX_REPORTED_PARSE_ERRORS);
+        all_errors.push(ParseError {
+            file: project_root.clone(),
+            line: None,
+            column: None,
+            message: format!("{omitted} additional parser diagnostics omitted"),
+        });
+    }
+
+    let total_source_bytes = total_source_bytes.load(Ordering::Relaxed);
+    let estimated_source_tokens = total_source_bytes.div_ceil(4);
 
     if all_functions.len() < 2 {
         return Ok(ScanResult {
