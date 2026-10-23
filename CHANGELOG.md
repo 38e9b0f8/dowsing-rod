@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `max_tokens` from configuration now applies to CLI AI output.
 - CLI flags and Python keyword arguments now override configuration even when they equal the default, for example `--min-similarity 0.75` over a configured `0.9`.
 - `scripts/test-npm.mjs` accepts npm 12's `npm pack --json` output.
+- The NuGet release workflow keeps each native binary in its `<rid>/` folder when it passes them between jobs; it previously failed at the "Check staged native binaries" step.
 
 ## [0.2.0] - Unreleased
 

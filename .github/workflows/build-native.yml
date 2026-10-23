@@ -88,9 +88,11 @@ jobs:
       - name: Stage native binary for NuGet
         if: inputs.package == 'nuget'
         run: node scripts/package-nuget.mjs ${{ matrix.rid }} target/${{ matrix.artifact_target }}/release/dowsing-rod${{ matrix.suffix }}
+      # Upload the parent folder: upload-artifact drops the top folder of a single
+      # path, and the package job needs each binary under its <rid>/ folder.
       - if: inputs.package == 'nuget'
         uses: actions/upload-artifact@v4
         with:
           name: nuget-native-${{ matrix.rid }}
-          path: dist/nuget-native/${{ matrix.rid }}
+          path: dist/nuget-native
           if-no-files-found: error
