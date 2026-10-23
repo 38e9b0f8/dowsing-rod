@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
-    <Version>0.3.0</Version>
+    <!-- The version is set once, in Cargo.toml's [workspace.package]. -->
+    <Version>$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../Cargo.toml')), '(?m)(?&lt;=^version = ")[^"]+').Value)</Version>
     <Authors>Dowsing Rod contributors</Authors>
     <Company>Dowsing Rod contributors</Company>
     <Copyright>Copyright (c) Dowsing Rod contributors</Copyright>

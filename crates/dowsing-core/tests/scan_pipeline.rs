@@ -93,7 +93,10 @@ fn fail_on_error_rejects_syntax_errors() {
 
 #[test]
 fn single_file_scan_uses_parent_as_repository_root() {
-    let file = fixture_path("exact_duplicates.py");
+    // Outside the workspace, whose pyproject.toml would otherwise be the root.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("exact_duplicates.py");
+    std::fs::copy(fixture_path("exact_duplicates.py"), &file).unwrap();
     let result = dowsing_core::scan(ScanConfig {
         path: file.clone(),
         use_cache: false,
@@ -107,4 +110,18 @@ fn single_file_scan_uses_parent_as_repository_root() {
         .clusters
         .iter()
         .any(|cluster| cluster_function_names(&result, cluster).contains(&"process_order")));
+}
+
+#[test]
+fn scan_inside_configured_project_uses_its_root() {
+    let file = fixture_path("exact_duplicates.py");
+    let result = dowsing_core::scan(ScanConfig {
+        path: file,
+        use_cache: false,
+        ..ScanConfig::default()
+    })
+    .expect("single-file scan should complete");
+
+    // The workspace pyproject.toml has [tool.dowsing-rod].
+    assert_eq!(result.repository.path, workspace_root());
 }

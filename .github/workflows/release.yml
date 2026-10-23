@@ -64,9 +64,7 @@ jobs:
       - name: Check tag matches package version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
-          test "$RELEASE_TAG" = "v$VERSION"
+        run: node scripts/version.mjs --check-tag "$RELEASE_TAG"
 
       - name: Download wheels
         uses: actions/download-artifact@v4

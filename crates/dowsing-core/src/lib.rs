@@ -56,9 +56,12 @@ pub fn scan(config: ScanConfig) -> Result<ScanResult> {
     let start = Instant::now();
 
     // ── 1. Resolve paths and configuration ──────────────────────────
+    // File configuration is the caller's job (see `config::load_file_config`),
+    // so values the caller sets explicitly are never second-guessed here.
     let scan_path = config::resolve_scan_path(&config.path)?;
     let project_root = config::resolve_project_root(&scan_path)?;
-    let mut config = config::load_config(&project_root, config)?;
+    config::validate(&config)?;
+    let mut config = config;
     config.path = scan_path.clone();
 
     // Configure rayon thread pool if jobs specified

@@ -18,7 +18,9 @@ function run(command, args, cwd = work, expected = 0) {
 try {
   const tarballs = [];
   for (const name of [`dowsing-rod-native-${platform}`, 'dowsing-rod']) {
-    const packed = JSON.parse(run(npm, ['pack', join(stage, name), '--json', '--ignore-scripts']));
+    // npm 11 and older print an array; npm 12 prints an object keyed by package name.
+    const output = JSON.parse(run(npm, ['pack', join(stage, name), '--json', '--ignore-scripts']));
+    const packed = Array.isArray(output) ? output : Object.values(output);
     assert(packed[0].files.some(f => f.path.startsWith('bin/')));
     tarballs.push(join(work, packed[0].filename));
   }

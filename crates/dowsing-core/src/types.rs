@@ -74,7 +74,8 @@ impl Default for ScanConfig {
 
 // ─── Output format ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     Human,
     Ai,
