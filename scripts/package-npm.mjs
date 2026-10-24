@@ -29,7 +29,7 @@ if (platform === 'launcher') {
   mkdirSync(join(directory, 'bin'), { recursive: true });
   const executable = join(directory, 'bin', `dowsing-rod${spec.os === 'win32' ? '.exe' : ''}`);
   cpSync(binary, executable); chmodSync(executable, 0o755);
-  const pkg = { name: `dowsing-rod-native-${platform}`, version, description: `Native ${platform} executable for dowsing-rod`, license: manifest.license, os: [spec.os], cpu: [spec.cpu], ...(spec.libc ? { libc: [spec.libc] } : {}), files: ['bin/', 'LICENSE', 'THIRD_PARTY_NOTICES.md'], publishConfig: { access: 'public' } };
+  const pkg = { name: `dowsing-rod-native-${platform}`, version, description: `Native ${platform} executable for dowsing-rod`, license: manifest.license, repository: manifest.repository, os: [spec.os], cpu: [spec.cpu], ...(spec.libc ? { libc: [spec.libc] } : {}), files: ['bin/', 'LICENSE', 'THIRD_PARTY_NOTICES.md'], publishConfig: { access: 'public' } };
   writeFileSync(join(directory, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
   documentation(directory);
   console.log(directory);
