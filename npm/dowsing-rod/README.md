@@ -7,6 +7,13 @@ npx dowsing-rod scan . --ai --max-tokens 2500
 npx dowsing-rod scan . --format json
 ```
 
+For repeat runs in hooks, CI, or coding agents, create a config file once and let `auto` read it:
+
+```sh
+npx dowsing-rod init   # writes dowsing-rod.toml with recommended defaults
+npx dowsing-rod auto   # scans using only that file
+```
+
 A small Node launcher runs the Rust scanner. Parsing and analysis happen locally. No Python, compiler, language server, telemetry, install scripts, or runtime downloads are required. Native packages are installed through npm optional dependencies.
 
 Requires Node 22+. Prebuilt binaries target macOS 10.12+ on Intel, macOS 11+ on Apple Silicon, Windows x64, and glibc 2.17+ on Linux x64/arm64. This covers RHEL 8–10, supported Ubuntu, Debian, Fedora, and SUSE releases. Node can impose a higher OS floor. musl/Alpine and Windows arm64 are not currently provided.

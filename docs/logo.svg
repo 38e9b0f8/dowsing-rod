@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-labelledby="title">
+  <title id="title">Dowsing Rod logo</title>
+  <defs>
+    <!-- soft neumorphic lift: light highlight top-left, warm shadow bottom-right -->
+    <filter id="tile" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="7" result="b"/>
+      <feOffset in="b" dx="-6" dy="-6" result="o1"/>
+      <feFlood flood-color="#FFFFFF"/><feComposite in2="o1" operator="in" result="hi"/>
+      <feOffset in="b" dx="6" dy="6" result="o2"/>
+      <feFlood flood-color="#C2AE93"/><feComposite in2="o2" operator="in" result="lo"/>
+      <feMerge><feMergeNode in="hi"/><feMergeNode in="lo"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="raise" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="b"/>
+      <feOffset in="b" dx="-3" dy="-3" result="o1"/>
+      <feFlood flood-color="#FFFFFF"/><feComposite in2="o1" operator="in" result="hi"/>
+      <feOffset in="b" dx="3" dy="3" result="o2"/>
+      <feFlood flood-color="#C2AE93"/><feComposite in2="o2" operator="in" result="lo"/>
+      <feMerge><feMergeNode in="hi"/><feMergeNode in="lo"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <radialGradient id="well" cx="0.5" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#C2AE93"/><stop offset="1" stop-color="#ECE3D6"/>
+    </radialGradient>
+  </defs>
+  <!-- sand panel with a raised tile -->
+  <rect width="200" height="200" rx="46" fill="#ECE3D6"/>
+  <rect x="22" y="22" width="156" height="156" rx="38" fill="#ECE3D6" filter="url(#tile)"/>
+  <!-- the water the rod points at -->
+  <ellipse cx="100" cy="158" rx="30" ry="9" fill="url(#well)" opacity="0.9"/>
+  <!-- the rod is a syntax-tree fork; its two matching copper leaves are the duplicates it finds -->
+  <g filter="url(#raise)">
+    <path d="M100 104 L64 62 M100 104 L136 62 M100 104 L100 144" fill="none" stroke="#D8CAB6" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="100" cy="104" r="12" fill="#D8CAB6"/>
+  </g>
+  <g filter="url(#raise)" fill="#C8743A">
+    <circle cx="64" cy="62" r="15"/>
+    <circle cx="136" cy="62" r="15"/>
+  </g>
+  <circle cx="100" cy="152" r="5" fill="#C8743A"/>
+</svg>

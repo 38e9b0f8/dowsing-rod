@@ -1,6 +1,6 @@
 # Dowsing Rod Algorithms
 
-This document describes the current `0.3.0` analysis pipeline. The implementation is deterministic and local-first: every phase runs in-process over source files and produces serializable evidence for renderers and downstream tools.
+This document describes the current analysis pipeline. The implementation is deterministic and local-first: every phase runs in-process over source files and produces serializable evidence for renderers and downstream tools.
 
 ## Pipeline
 
@@ -22,9 +22,11 @@ config
 
 ## Configuration
 
-`ScanConfig` starts from defaults, then merges `[tool.dowsing-rod]` from `pyproject.toml` or top-level keys from `dowsing-rod.toml`, then applies caller-provided overrides. The scan target can be a directory or any supported source file.
+Configuration comes from top-level keys in `dowsing-rod.toml` or the `[tool.dowsing-rod]` section of `pyproject.toml`; `dowsing-rod.toml` wins when a folder has both. The project root is the nearest folder, starting at the scan target (or a single file's parent) and walking up, that contains either. With none, the root is the scan target's folder. The project root is used for config lookup, cache storage, and relative display paths.
 
-The project root is used for config lookup, cache storage, and relative display paths. For a single-file scan, the project root is the file's parent directory.
+`config::load_file_config` parses the file. Keys it does not recognize are kept in `FileConfig::unknown` and reported by `FileConfig::warnings`. `FileConfig::to_scan_config` overlays the file on the built-in defaults, and callers (the CLI and the Python bindings) then apply only the options the user passed, so an explicit value always wins. `dowsing_core::scan` takes the resulting `ScanConfig` as given and validates it; it does not read configuration files itself. `dowsing-rod auto` uses the file alone and fails when no configuration exists.
+
+The scan target can be a directory or any supported source file.
 
 ## Discovery
 

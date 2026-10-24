@@ -1,6 +1,7 @@
 use dowsing_core::types::ScanConfig;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::ffi::CString;
 use std::path::PathBuf;
 
 // ─── PyO3 Module ─────────────────────────────────────────────────────────
@@ -21,9 +22,20 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pyfunction]
 #[pyo3(name = "scan", signature = (path=".", **kwargs))]
 fn py_scan(py: Python<'_>, path: &str, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<PyObject> {
+    // Start from the project's config file; keyword arguments then override
+    // it, so an explicit value wins even when it equals the default.
+    let to_py = |e: anyhow::Error| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string());
+    let root = dowsing_core::config::resolve_project_root(path.as_ref()).map_err(to_py)?;
+    let file = dowsing_core::config::load_file_config(&root)
+        .map_err(to_py)?
+        .unwrap_or_default();
+    let user_warning = py.get_type::<pyo3::exceptions::PyUserWarning>();
+    for warning in file.warnings() {
+        PyErr::warn(py, user_warning.as_any(), &CString::new(warning)?, 1)?;
+    }
     let mut config = ScanConfig {
         path: PathBuf::from(path),
-        ..ScanConfig::default()
+        ..file.to_scan_config()
     };
 
     if let Some(kw) = kwargs {

@@ -15,11 +15,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
-      - uses: goto-bus-stop/setup-zig@v2
+      - uses: ./.github/actions/toolchain
         with:
-          version: '0.14.0'
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --version 0.23.4 --locked
+          zig: true
       - name: Build against glibc 2.17
         run: cargo zigbuild -p dowsing-cli --release --locked --target x86_64-unknown-linux-gnu.2.17
       - name: Check symbols and run on the manylinux2014 baseline
@@ -68,10 +66,24 @@ jobs:
           dowsing-rod scan tests/fixtures --ai --max-tokens 1200 --no-cache
           python -c "import dowsing_rod; print(dowsing_rod.__version__)"
 
+      - name: Smoke test init and auto
+        run: |
+          # This repository's pyproject.toml configures dowsing-rod, so auto works from a subfolder.
+          dowsing-rod auto tests/fixtures
+          # A folder with no configuration anywhere above it: auto refuses, then works after init.
+          PROJECT="$RUNNER_TEMP/init-check"
+          mkdir "$PROJECT"
+          cp tests/fixtures/exact_duplicates.py "$PROJECT/"
+          if dowsing-rod auto "$PROJECT"; then echo "auto should fail without configuration"; exit 1; fi
+          dowsing-rod init "$PROJECT"
+          if dowsing-rod init "$PROJECT"; then echo "init should refuse to overwrite"; exit 1; fi
+          dowsing-rod auto "$PROJECT"
+          test -f "$PROJECT/.dowsing-rod-cache/.gitignore"
+
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: ./.github/actions/toolchain
         with:
-          node-version: '24'
+          node: true
 
       - name: Test npm packed install
         run: |
@@ -81,16 +93,16 @@ jobs:
           node scripts/test-npm.mjs
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: ./.github/actions/toolchain
         with:
-          dotnet-version: '8.0.x'
+          dotnet: true
 
       - name: Test packed NuGet tool
         run: |
           node scripts/package-nuget.mjs linux-x64 target/release/dowsing-rod nuget/dowsing-rod/native
           dotnet pack nuget/dowsing-rod --configuration Release --output dist/nuget
           mkdir "$RUNNER_TEMP/dowsing-rod-tool"
-          VERSION="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' nuget/Directory.Build.props)"
+          VERSION="$(node scripts/version.mjs)"
           dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error

@@ -1,0 +1,25 @@
+# Dowsing Rod configuration — https://github.com/38e9b0f8/dowsing-rod#configuration
+# `dowsing-rod auto` runs entirely from this file. `dowsing-rod scan` also reads it,
+# and its command-line flags override these values.
+
+# Minimum similarity (0.0–1.0) for two functions to count as related.
+# Raise it to report fewer, tighter clusters.
+min_similarity = 0.75
+
+# How aggressively identifiers are canonicalized: "strict", "balanced", or "aggressive".
+normalization = "balanced"
+
+# Output for `auto`, and for `scan` without --format or --ai: "human", "ai", "json", or "jsonl".
+# Set "ai" or "json" for hooks, CI jobs, and coding agents.
+format = "human"
+
+# Exit with an error when any file fails to parse.
+fail_on_error = false
+
+# Extra paths or globs to skip. .gitignore, build output, virtualenvs,
+# node_modules, and the cache directory are already skipped.
+exclude = []
+
+# Uncomment to limit what gets reported.
+# max_clusters = 25   # most valuable clusters only
+# max_tokens = 8000   # token budget for --ai / format = "ai"

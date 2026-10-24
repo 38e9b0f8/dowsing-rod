@@ -1,0 +1,40 @@
+name: Toolchain
+description: >-
+  Install the pinned build tools. Every tool version the workflows use is set here,
+  so a bump is a one-line change. Rust stays on stable via dtolnay/rust-toolchain.
+
+inputs:
+  node:
+    description: Install Node.js.
+    default: "false"
+  registry-url:
+    description: npm registry to authenticate against when publishing.
+    default: ""
+  zig:
+    description: Install Zig and cargo-zigbuild for glibc 2.17 Linux builds.
+    default: "false"
+  dotnet:
+    description: Install the .NET SDK used to pack the NuGet tool.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.node == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "24"
+        registry-url: ${{ inputs.registry-url }}
+    - if: inputs.zig == 'true'
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: "0.14.0"
+    - if: inputs.zig == 'true'
+      name: Install cargo-zigbuild
+      shell: bash
+      run: cargo install cargo-zigbuild --version 0.23.4 --locked
+    - if: inputs.dotnet == 'true'
+      uses: actions/setup-dotnet@v4
+      with:
+        # Keep the major version in step with <TargetFramework> in nuget/dowsing-rod/DowsingRod.csproj.
+        dotnet-version: "8.0.x"

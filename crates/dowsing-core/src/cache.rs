@@ -22,6 +22,13 @@ impl Cache {
         if !dir.exists() {
             std::fs::create_dir_all(&dir)?;
         }
+        // Same convention as pytest, mypy, and ruff: the cache ignores itself,
+        // so users never need to edit their own .gitignore. Best-effort: a
+        // failed write must not disable caching.
+        let gitignore = dir.join(".gitignore");
+        if !gitignore.exists() {
+            let _ = std::fs::write(gitignore, "# Created by dowsing-rod automatically.\n*\n");
+        }
         Ok(Self { dir })
     }
 
@@ -136,6 +143,14 @@ mod tests {
     }
 
     #[test]
+    fn test_cache_ignores_itself_for_git() {
+        let dir = TempDir::new().unwrap();
+        let cache = Cache::open(dir.path()).unwrap();
+        let gitignore = std::fs::read_to_string(cache.directory().join(".gitignore")).unwrap();
+        assert!(gitignore.lines().any(|line| line == "*"));
+    }
+
+    #[test]
     fn test_cache_hit() {
         let dir = TempDir::new().unwrap();
         let cache = Cache::open(dir.path()).unwrap();
@@ -194,6 +209,7 @@ mod tests {
 
         let cleared = cache.clear().unwrap();
         assert_eq!(cleared, 1);
+        assert!(cache.directory().join(".gitignore").is_file());
 
         let loaded = cache.load(&path, content, NormalizationLevel::Balanced);
         assert!(loaded.is_none());

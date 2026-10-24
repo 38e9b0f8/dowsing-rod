@@ -223,7 +223,10 @@ fn standalone_configuration_works_without_python_manifest() {
         "min_similarity = 0.93\nnormalization = 'strict'\n",
     )
     .unwrap();
-    let config = dowsing_core::config::load_config(dir.path(), ScanConfig::default()).unwrap();
+    let config = dowsing_core::config::load_file_config(dir.path())
+        .unwrap()
+        .expect("dowsing-rod.toml should be found")
+        .to_scan_config();
     assert_eq!(config.min_similarity, 0.93);
     assert_eq!(
         config.normalization,

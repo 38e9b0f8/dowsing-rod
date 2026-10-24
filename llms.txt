@@ -32,6 +32,22 @@ Or to inspect test suite parametrization opportunities:
 uvx dowsing-rod scan tests/ --ai --max-tokens 2000
 ```
 
+### Repeat Runs: `init` Once, Then `auto`
+
+If the project has a `dowsing-rod.toml` (or `[tool.dowsing-rod]` in `pyproject.toml`), prefer `dowsing-rod auto`: it takes no flags and uses the project's own settings. It works from any subfolder and fails if no configuration exists. To set a project up, run `dowsing-rod init` and set `format = "ai"` for agent-friendly output:
+
+```bash
+uvx dowsing-rod init    # writes dowsing-rod.toml with recommended defaults
+uvx dowsing-rod auto    # scans using only that file
+```
+
+```toml
+# dowsing-rod.toml for coding agents
+format = "ai"
+max_tokens = 4000
+max_clusters = 10
+```
+
 ### Why It Is Ideal for LLM Contexts
 - **Bounded Rust Pipeline**: Uses parallel parsing and capped per-language candidate sets so large repositories avoid quadratic pair scoring.
 - **Zero Runtime Dependencies**: Pre-compiled native binary; zero pip dependencies, zero node_modules bloat.
@@ -101,6 +117,9 @@ dowsing-rod scan . --format json
 - `--normalization <strict|balanced|aggressive>`: AST normalization depth (default: `balanced`).
 - `--exclude <GLOB>`: Exclude directories or file patterns (repeatable).
 - `--no-cache`: Force fresh scan ignoring `.dowsing-rod-cache/`.
+- `--fail-on-error` / `--no-fail-on-error`: Fail, or keep going, when a file cannot be parsed.
+
+Flags override the config file, even when they equal the default. Unknown config keys print a warning.
 
 ---
 
