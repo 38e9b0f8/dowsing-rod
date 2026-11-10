@@ -8,6 +8,10 @@ Dowsing Rod finds structural refactoring opportunities in Python, JavaScript/JSX
 
 It works offline. Source code is parsed locally, normalized locally, and rendered locally.
 
+![Terminal recording: uvx dowsing-rod scan . clusters the copy-pasted charge, refund and status functions of three payment providers, then prints the top findings in the compact --ai format](https://raw.githubusercontent.com/38e9b0f8/dowsing-rod/main/docs/demo.gif)
+
+*Three payment providers, copied from one another and then edited. A text diff flags 15 of 34 lines as changed between any two of them; Dowsing Rod sees the same three pipelines.*
+
 ## Status
 
 The current release adds native Rust scanning: functions, impl and trait methods with bodies, closures, and async fn. See [CHANGELOG.md](CHANGELOG.md) for each release. The scanner remains local-first: parsing, normalization, scoring, caching, and rendering all happen on the machine running it.
@@ -362,6 +366,60 @@ The version is set in one place: `version` under `[workspace.package]` in `Cargo
 Tool versions for CI and releases (Node, Zig, cargo-zigbuild, .NET) are likewise set once, in `.github/actions/toolchain/action.yml`.
 
 The release workflows build and test every package before publishing. PyPI and NuGet use trusted publishing. npm uses trusted publishing after its first release; set a temporary `NPM_TOKEN` in the `npm-release` environment for that bootstrap, configure the publisher for `dowsing-rod` and the five `dowsing-rod-native-*` packages, then delete the token. Configure environment approval before the first release. Dispatch the npm and NuGet workflows from a matching `v<version>` tag with `publish` enabled.
+
+<details>
+<summary>Regenerating the README demo GIF</summary>
+
+`docs/demo.gif` is recorded with [VHS](https://github.com/charmbracelet/vhs) from the tape below, which runs PowerShell, so record it on Windows after output changes. Install VHS, ttyd, and FFmpeg with winget (`charmbracelet.vhs`, `tsl0922.ttyd`, `Gyan.FFmpeg.Essentials`) or another package manager, put `uv` on PATH, save the tape to a file such as `demo.tape`, and run `vhs demo.tape` from the repository root.
+
+```text
+Output docs/demo.gif
+
+Set Shell "powershell"
+Set FontFamily "Cascadia Mono"
+Set FontSize 18
+Set LetterSpacing 0
+# 120 x 52 cells: wide enough that only the C3 reason wraps, at a space, and tall
+# enough to keep the whole findings table on screen above the cluster details.
+Set Width 1266
+Set Height 1148
+Set Padding 18
+Set TypingSpeed 45ms
+Set Framerate 24
+
+# Dark ink background with the sand, copper and ink of docs/logo.svg.
+# Bold text uses the bright colors, so brightCyan and brightMagenta are the headings.
+Set Theme { "name": "Dowsing Sand", "background": "#211A14", "foreground": "#ECE3D6", "cursor": "#C8743A", "selection": "#4B3B2D", "black": "#2E241B", "red": "#D9694F", "green": "#A9BC74", "yellow": "#E4B565", "blue": "#86A9C0", "magenta": "#D98A52", "cyan": "#8CC5B4", "white": "#ECE3D6", "brightBlack": "#9A8874", "brightRed": "#E8836B", "brightGreen": "#BDCF8A", "brightYellow": "#F0CB86", "brightBlue": "#A2C0D4", "brightMagenta": "#E0884A", "brightCyan": "#E0884A", "brightWhite": "#FFF8EE" }
+
+# Hidden setup: scan a copy of the fixtures in C:\demo\payments so the Path line stays
+# short, run uvx once so its download message isn't recorded, and set a copper prompt.
+Hide
+Type `Remove-Item -Recurse -Force C:\demo -ErrorAction SilentlyContinue; New-Item -ItemType Directory C:\demo\payments | Out-Null; Copy-Item tests\fixtures\provider_implementations\*.py C:\demo\payments; Set-Location C:\demo\payments; uvx dowsing-rod version | Out-Null; function prompt { "$([char]27)[38;2;200;116;58m$([char]0x276F)$([char]27)[0m " }; Clear-Host`
+Enter
+Sleep 3s
+Show
+
+Sleep 500ms
+Type "uvx dowsing-rod scan ."
+Sleep 400ms
+Enter
+Sleep 8s
+
+Ctrl+L
+Sleep 300ms
+Type "uvx dowsing-rod scan . --ai --max-tokens 500"
+Sleep 400ms
+Enter
+Sleep 5s
+
+# Hidden cleanup: delete the copy in C:\demo.
+Hide
+Type `Set-Location \; Remove-Item -Recurse -Force C:\demo`
+Enter
+Sleep 1s
+```
+
+</details>
 
 ## Comparison With Other Tools
 
