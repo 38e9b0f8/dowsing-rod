@@ -108,6 +108,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## tree-sitter-java-0.23.5
+
+MIT; see the published crate for copyright notices.
+
 ## tree-sitter-rust-0.24.2
 
 The MIT License (MIT)

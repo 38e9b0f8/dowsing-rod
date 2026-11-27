@@ -45,7 +45,11 @@ pub(crate) fn analyze(
         }
         if let Some(kind) = unit_kind(node, language) {
             // Error recovery can manufacture plausible functions. Only analyze intact units.
-            if !node.has_error() {
+            // Trivial Java accessors are skipped: they are structurally identical by design
+            // and would otherwise flood clusters and the per-language candidate budget.
+            if !node.has_error()
+                && !(language == Language::Java && is_trivial_java_accessor(node, parser_source))
+            {
                 let (info, normalized) = extract(
                     node,
                     kind,
@@ -217,6 +221,221 @@ fn unit_kind(node: Node<'_>, language: Language) -> Option<FunctionKind> {
         {
             NestedFunction
         }
+        // Abstract and interface methods have no body and are skipped.
+        (
+            Language::Java,
+            "method_declaration" | "constructor_declaration" | "compact_constructor_declaration",
+        ) if node.child_by_field_name("body").is_some() => Method,
+        (Language::Java, "lambda_expression") => Lambda,
+        _ => return None,
+    })
+}
+
+/// A Java method whose whole body is `return field;`, `return this.field;`,
+/// `field = param;` or `this.field = param;`: getters and setters.
+fn is_trivial_java_accessor(node: Node<'_>, source: &str) -> bool {
+    if node.kind() != "method_declaration" {
+        return false;
+    }
+    let Some(body) = node.child_by_field_name("body") else {
+        return false;
+    };
+    let mut cursor = body.walk();
+    let statements: Vec<_> = body
+        .named_children(&mut cursor)
+        .filter(|n| !n.kind().contains("comment"))
+        .collect();
+    let [statement] = statements.as_slice() else {
+        return false;
+    };
+    let field_or_name = |n: Node<'_>| match n.kind() {
+        "identifier" => true,
+        "field_access" => {
+            n.child_by_field_name("object")
+                .is_some_and(|o| o.kind() == "this")
+                && n.child_by_field_name("field")
+                    .is_some_and(|f| f.kind() == "identifier")
+        }
+        _ => false,
+    };
+    match statement.kind() {
+        "return_statement" => statement.named_child(0).is_some_and(field_or_name),
+        "expression_statement" => statement.named_child(0).is_some_and(|e| {
+            e.kind() == "assignment_expression"
+                && e.child_by_field_name("operator")
+                    .is_some_and(|op| text(op, source) == "=")
+                && e.child_by_field_name("left").is_some_and(field_or_name)
+                && e.child_by_field_name("right")
+                    .is_some_and(|r| r.kind() == "identifier")
+        }),
+        _ => false,
+    }
+}
+
+/// Annotations that say nothing about a method's structure. They are kept out
+/// of `decorators`, which feeds the metadata fingerprint.
+const JAVA_NOISE_ANNOTATIONS: &[&str] = &[
+    "Override",
+    "SuppressWarnings",
+    "Deprecated",
+    "SafeVarargs",
+    "FunctionalInterface",
+    "Nullable",
+    "NonNull",
+    "Nonnull",
+    "NotNull",
+    "CheckForNull",
+];
+
+const JAVA_TEST_ANNOTATIONS: &[&str] = &[
+    "Test",
+    "ParameterizedTest",
+    "RepeatedTest",
+    "TestFactory",
+    "TestTemplate",
+];
+
+struct JavaModifiers {
+    annotations: Vec<String>,
+    keywords: Vec<String>,
+}
+
+fn java_modifiers(node: Node<'_>, source: &str) -> JavaModifiers {
+    let mut result = JavaModifiers {
+        annotations: Vec::new(),
+        keywords: Vec::new(),
+    };
+    let Some(modifiers) = child_kind(node, "modifiers") else {
+        return result;
+    };
+    let mut cursor = modifiers.walk();
+    for child in modifiers.children(&mut cursor) {
+        match child.kind() {
+            "marker_annotation" | "annotation" => {
+                if let Some(name) = child.child_by_field_name("name") {
+                    let name = text(name, source);
+                    // `@org.junit.Test` and `@Test` are the same annotation.
+                    let simple = name.rsplit('.').next().unwrap_or(name).trim();
+                    result.annotations.push(simple.to_string());
+                }
+            }
+            kind if !child.is_named() => result.keywords.push(kind.to_string()),
+            _ => {}
+        }
+    }
+    result
+}
+
+/// Java's `a.b(x).c(y)` call target is `a.b(..).c`: the receiver chain is kept,
+/// argument text is dropped.
+fn collapse_arguments(raw: &str) -> String {
+    let mut collapsed = String::with_capacity(raw.len());
+    let mut depth = 0usize;
+    for character in raw.chars() {
+        match character {
+            '(' => {
+                if depth == 0 {
+                    collapsed.push_str("(..");
+                }
+                depth += 1;
+            }
+            ')' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    collapsed.push(')');
+                }
+            }
+            _ if depth > 0 => {}
+            c if c.is_whitespace() => {}
+            c => collapsed.push(c),
+        }
+    }
+    collapsed
+}
+
+fn java_call_target(node: Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "method_invocation" => {
+            let name = text(node.child_by_field_name("name")?, source);
+            Some(match node.child_by_field_name("object") {
+                Some(object) => format!("{}.{name}", collapse_arguments(text(object, source))),
+                None => name.to_string(),
+            })
+        }
+        "object_creation_expression" => Some(format!(
+            "new {}",
+            collapse_arguments(text(node.child_by_field_name("type")?, source))
+        )),
+        "explicit_constructor_invocation" => node
+            .child_by_field_name("constructor")
+            .map(|n| text(n, source).to_string()),
+        _ => None,
+    }
+}
+
+fn is_java_type_declaration(kind: &str) -> bool {
+    matches!(
+        kind,
+        "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration"
+    )
+}
+
+/// Lexical scopes that only the Java frontend opens. Kept separate so other
+/// languages' normalization is unchanged.
+fn is_java_scope(kind: &str) -> bool {
+    matches!(
+        kind,
+        "constructor_body"
+            | "enhanced_for_statement"
+            | "catch_clause"
+            | "switch_block_statement_group"
+            | "switch_rule"
+            | "try_with_resources_statement"
+    )
+}
+
+/// Names a Java node introduces into the current scope.
+fn java_bindings(node: Node<'_>) -> Vec<Node<'_>> {
+    let named = |field: &str| node.child_by_field_name(field).into_iter().collect();
+    match node.kind() {
+        "enhanced_for_statement" | "catch_formal_parameter" | "resource" => named("name"),
+        // `obj instanceof Foo foo`.
+        "instanceof_expression" => named("name"),
+        // `case Foo foo ->` and record pattern components.
+        "type_pattern" | "record_pattern_component" => {
+            let mut cursor = node.walk();
+            let last = node
+                .named_children(&mut cursor)
+                .filter(|n| n.kind() == "identifier")
+                .last();
+            last.into_iter().collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The receiver-free call name used in Java's normalized tokens.
+fn java_call_token(node: Node<'_>, source: &str) -> Option<String> {
+    (node.kind() == "method_invocation")
+        .then(|| node.child_by_field_name("name"))
+        .flatten()
+        .map(|name| text(name, source).to_string())
+}
+
+fn java_control_token(kind: &str) -> Option<StructuralToken> {
+    use StructuralToken::*;
+    Some(match kind {
+        "ternary_expression" => If,
+        "enhanced_for_statement" => For,
+        "switch_expression" => Match,
+        "switch_block_statement_group" | "switch_rule" => Case,
+        "try_with_resources_statement" => Try,
+        "finally_clause" => Finally,
+        "assert_statement" => Assert,
         _ => return None,
     })
 }
@@ -299,7 +518,35 @@ fn spelling(raw: &str, language: Language) -> String {
     }
 }
 
+fn java_parameter_nodes(node: Node<'_>) -> Vec<Node<'_>> {
+    let Some(container) = node.child_by_field_name("parameters") else {
+        return Vec::new();
+    };
+    if container.kind() == "identifier" {
+        return vec![container];
+    }
+    let mut cursor = container.walk();
+    let children: Vec<_> = container.named_children(&mut cursor).collect();
+    children
+        .into_iter()
+        .filter_map(|child| match child.kind() {
+            // `x -> ...` lists and `(a, b) -> ...` inferred lambda parameters.
+            "identifier" => Some(child),
+            "formal_parameter" => child.child_by_field_name("name"),
+            // Varargs: `String... names`.
+            "spread_parameter" => child_kind(child, "variable_declarator")
+                .and_then(|d| d.child_by_field_name("name"))
+                .or_else(|| child_kind(child, "identifier")),
+            // `receiver_parameter` (explicit `this`) is not a local.
+            _ => None,
+        })
+        .collect()
+}
+
 fn parameter_nodes<'a>(node: Node<'a>, source: &str, language: Language) -> Vec<Node<'a>> {
+    if language == Language::Java {
+        return java_parameter_nodes(node);
+    }
     let container = node
         .child_by_field_name("parameters")
         .or_else(|| node.child_by_field_name("parameter"))
@@ -519,7 +766,8 @@ fn extract(
                 | "impl_item"
                 | "mod_item"
                 | "trait_item"
-        ) || unit_kind(p, language).is_some()
+        ) || (language == Language::Java && is_java_type_declaration(p.kind()))
+            || unit_kind(p, language).is_some()
         {
             let scope = p
                 .child_by_field_name("name")
@@ -548,7 +796,8 @@ fn extract(
                 let scope = text(scope, source).to_string();
                 if class_name.is_none()
                     && (p.kind().contains("class")
-                        || matches!(p.kind(), "impl_item" | "trait_item"))
+                        || matches!(p.kind(), "impl_item" | "trait_item")
+                        || (language == Language::Java && is_java_type_declaration(p.kind())))
                 {
                     class_name = Some(scope.clone());
                 }
@@ -600,6 +849,37 @@ fn extract(
             FunctionKind::AsyncFunction
         };
     }
+    let mut decorators = Vec::new();
+    let mut is_public = !name.starts_with('_');
+    let mut is_staticmethod = false;
+    let mut is_test = name.starts_with("test")
+        || path
+            .components()
+            .any(|p| matches!(p.as_os_str().to_str(), Some("tests" | "test")));
+    if language == Language::Java {
+        let modifiers = java_modifiers(node, source);
+        is_test = is_test
+            || modifiers
+                .annotations
+                .iter()
+                .any(|a| JAVA_TEST_ANNOTATIONS.contains(&a.as_str()))
+            || class_name
+                .as_deref()
+                .is_some_and(|c| c.ends_with("Test") || c.ends_with("Tests") || c.ends_with("IT"));
+        decorators = modifiers
+            .annotations
+            .into_iter()
+            .filter(|a| !JAVA_NOISE_ANNOTATIONS.contains(&a.as_str()))
+            .collect();
+        is_staticmethod = modifiers.keywords.iter().any(|k| k == "static");
+        // Interface members are implicitly public.
+        let in_interface = node
+            .parent()
+            .and_then(|body| body.parent())
+            .is_some_and(|owner| owner.kind() == "interface_declaration");
+        is_public = kind != FunctionKind::Lambda
+            && (in_interface || modifiers.keywords.iter().any(|k| k == "public"));
+    }
     let info = FunctionInfo {
         language,
         file: path.to_path_buf(),
@@ -617,7 +897,7 @@ fn extract(
         source_bytes: node.end_byte() - node.start_byte(),
         ast_node_count: normalizer.nodes,
         complexity: normalizer.complexity,
-        decorators: Vec::new(),
+        decorators,
         parameters,
         return_annotation: node
             .child_by_field_name("return_type")
@@ -625,15 +905,12 @@ fn extract(
             .or_else(|| node.child_by_field_name("type"))
             .map(|n| text(n, source).to_string()),
         called_functions: normalizer.calls,
-        is_public: !name.starts_with('_'),
+        is_public,
         is_dunder: false,
-        is_test: name.starts_with("test")
-            || path
-                .components()
-                .any(|p| matches!(p.as_os_str().to_str(), Some("tests" | "test"))),
+        is_test,
         is_property: false,
         is_classmethod: false,
-        is_staticmethod: false,
+        is_staticmethod,
         is_async,
         parser_recovered,
     };
@@ -670,6 +947,11 @@ impl Normalizer<'_> {
     }
 
     fn register(&mut self, node: Node<'_>) {
+        if self.language == Language::Java {
+            for binding in java_bindings(node) {
+                self.bind(text(binding, self.source).to_string());
+            }
+        }
         if self.language == Language::Rust {
             if let Some(pattern) = match node.kind() {
                 "let_declaration" | "for_expression" | "match_arm" => {
@@ -729,6 +1011,9 @@ impl Normalizer<'_> {
                     node.kind(),
                     "label_declaration" | "end_process" | "subprogram_end"
                 )
+                // Java visibility keywords and annotations are recorded as metadata;
+                // `public` vs `protected` should not lower structural similarity.
+                || (self.language == Language::Java && node.kind() == "modifiers")
             {
                 continue;
             }
@@ -751,7 +1036,10 @@ impl Normalizer<'_> {
                         | "while_expression"
                         | "match_expression"
                         | "match_arm"
-                );
+                )
+                || (node != self.root
+                    && self.language == Language::Java
+                    && is_java_scope(node.kind()));
             if is_scope {
                 self.locals.push(HashMap::new());
             }
@@ -759,10 +1047,23 @@ impl Normalizer<'_> {
             let raw = text(node, self.source);
             let value = spelling(raw, self.language);
             if let Some(call) = call_target(node, self.source, self.language) {
-                self.calls.insert(call.clone());
-                self.tokens.push(StructuralToken::Call(call));
+                // Like the Python frontend, Java's structural token names only the method; the
+                // receiver is still tokenized (as a local, member, or external name) and the full
+                // target is kept in `called_functions`, so renamed locals don't break matches.
+                let token = if self.language == Language::Java {
+                    java_call_token(node, self.source).unwrap_or_else(|| call.clone())
+                } else {
+                    call.clone()
+                };
+                self.calls.insert(call);
+                self.tokens.push(StructuralToken::Call(token));
             }
-            if let Some(token) = control_token(node.kind(), &value) {
+            let token = if self.language == Language::Java {
+                java_control_token(node.kind()).or_else(|| control_token(node.kind(), &value))
+            } else {
+                control_token(node.kind(), &value)
+            };
+            if let Some(token) = token {
                 if !matches!(
                     token,
                     StructuralToken::Return
@@ -777,7 +1078,10 @@ impl Normalizer<'_> {
             if literal_kind(node.kind()) {
                 self.tokens
                     .push(if self.level == NormalizationLevel::Aggressive {
-                        if node.kind().contains("string") || node.kind().contains("char") {
+                        if node.kind().contains("string")
+                            || node.kind().contains("char")
+                            || node.kind() == "text_block"
+                        {
                             StructuralToken::StringLiteral
                         } else {
                             StructuralToken::NumericLiteral
@@ -855,6 +1159,9 @@ fn is_member(node: Node<'_>) -> bool {
                 | "selection"
                 | "scoped_identifier"
                 | "scoped_type_identifier"
+                // Java: `obj.field` and the method name of `obj.method()`.
+                | "field_access"
+                | "method_invocation"
         ) && p
             .child_by_field_name("expression")
             .or_else(|| p.child_by_field_name("object"))
@@ -888,6 +1195,12 @@ fn literal_kind(kind: &str) -> bool {
             | "decimal_literal"
             | "integral_number"
             | "real_number"
+            // Java
+            | "octal_integer_literal"
+            | "binary_integer_literal"
+            | "decimal_floating_point_literal"
+            | "hex_floating_point_literal"
+            | "text_block"
     )
 }
 
@@ -917,6 +1230,9 @@ fn control_token(kind: &str, value: &str) -> Option<StructuralToken> {
 }
 
 fn call_target(node: Node<'_>, source: &str, language: Language) -> Option<String> {
+    if language == Language::Java {
+        return java_call_target(node, source);
+    }
     let target = match node.kind() {
         "call_expression" => node.child_by_field_name("function"),
         "macro_invocation" => node.child_by_field_name("macro"),
@@ -955,6 +1271,7 @@ mod tests {
             "duplicates.cpp",
             "duplicates.cs",
             "duplicates.rs",
+            "duplicates.java",
             "duplicates.vhd",
         ] {
             let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1038,6 +1355,7 @@ mod tests {
             ("cpp", "int good(int x) { return x; } int broken( {"),
             ("cs", "class A { int Good(int x) { return x; } int Broken( { }"),
             ("rs", "fn good(x: i32) -> i32 { x } fn broken( {"),
+            ("java", "class A { int good(int x) { return x; } int broken( { }"),
             ("sv", "module m; function int good(int x); return x; endfunction always_ff @( begin endmodule"),
             ("vhd", "package body p is function good(x: integer) return integer is begin return x; end function; function broken( end package body;"),
         ] {
@@ -1194,5 +1512,171 @@ endclass
             NormalizationLevel::Balanced,
         );
         assert_eq!(c.functions[0].language, Language::C);
+    }
+
+    fn java(source: &str) -> FileAnalysis {
+        run(source, "java", NormalizationLevel::Balanced)
+    }
+
+    #[test]
+    fn java_units_scopes_and_metadata() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/languages")
+            .join("duplicates.java");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let result = analyze(&source, &path, Language::Java, NormalizationLevel::Balanced).unwrap();
+        assert!(result.parse_errors.is_empty());
+        let names: Vec<_> = result
+            .functions
+            .iter()
+            .map(|f| f.qualified_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Calculator::sumPositive",
+                "Calculator::addPositive",
+                "Calculator::doubler",
+                "Calculator::doubler::twice",
+                "Shape::describe",
+                "Point::Point",
+            ]
+        );
+        // Getters/setters are skipped; bodiless interface methods are not units.
+        assert!(result
+            .functions
+            .iter()
+            .all(|f| !matches!(f.function_name.as_str(), "getBase" | "setBase" | "area")));
+        let sum = &result.functions[0];
+        assert_eq!(sum.kind, FunctionKind::Method);
+        assert_eq!(sum.class_name.as_deref(), Some("Calculator"));
+        assert_eq!(sum.parameters, ["values"]);
+        assert_eq!(sum.return_annotation.as_deref(), Some("int"));
+        assert!(sum.is_public);
+        assert_eq!(result.functions[3].kind, FunctionKind::Lambda);
+        assert!(
+            result.functions[4].is_public,
+            "interface members are public"
+        );
+        assert_eq!(result.functions[4].class_name.as_deref(), Some("Shape"));
+    }
+
+    #[test]
+    fn java_renames_normalize_but_calls_members_and_literals_survive() {
+        let r = java("class A { int a(Client client, int x) { int y = client.charge(x); return y + 1; } int b(Client client, int amount) { int total = client.charge(amount); return total + 1; } }");
+        assert_eq!(r.functions[0].parameters, ["client", "x"]);
+        assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+        // The receiver is spelled as written, as in the other frontends.
+        assert!(r.functions[0].called_functions.contains("client.charge"));
+        for other in [
+            "int y = client.refund(x); return y + 1;",
+            "int y = client.charge(x); return y - 1;",
+            "int y = client.charge(x); return y + 2;",
+            "int y = this.rate; return y + 1;",
+        ] {
+            let source = format!("class A {{ int a(Client client, int x) {{ int y = client.charge(x); return y + 1; }} int b(Client client, int x) {{ {other} }} }}");
+            let r = java(&source);
+            assert!(r.parse_errors.is_empty(), "{other}");
+            assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens, "{other}");
+        }
+        let r = java("class A { int a() { return this.x * 2; } int b() { return this.y * 2; } }");
+        assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
+        let r = run(
+            "class A { String a(int x) { return \"a\" + x * 2; } String b(int y) { return \"\"\"\n  b\n  \"\"\" + y * 3; } }",
+            "java",
+            NormalizationLevel::Aggressive,
+        );
+        assert!(r.parse_errors.is_empty());
+        assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+    }
+
+    #[test]
+    fn java_chained_calls_and_constructors_are_call_targets() {
+        let r = java("class A { void a(Builder b) { b.name(first(1)).build(); new java.util.ArrayList<String>(); super.close(); } }");
+        let calls = &r.functions[0].called_functions;
+        assert!(calls.contains("b.name"), "{calls:?}");
+        assert!(calls.contains("b.name(..).build"), "{calls:?}");
+        assert!(calls.contains("first"), "{calls:?}");
+        assert!(
+            calls.contains("new java.util.ArrayList<String>"),
+            "{calls:?}"
+        );
+        assert!(calls.contains("super.close"), "{calls:?}");
+    }
+
+    #[test]
+    fn java_modifiers_and_annotations_are_metadata_not_structure() {
+        let r = java("class FooTest { @Override public int a(final int x) { return x + 1; } @Test @Transactional protected static int b(int y) { return y + 1; } }");
+        assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+        assert!(r.functions[0].decorators.is_empty(), "@Override is noise");
+        assert_eq!(r.functions[1].decorators, ["Test", "Transactional"]);
+        assert!(r.functions[1].is_staticmethod);
+        assert!(!r.functions[1].is_public);
+        assert!(r.functions.iter().all(|f| f.is_test));
+        let r = java("class Service { @org.junit.jupiter.api.Test void check() { run(); } void plain() { run(); } }");
+        assert!(r.functions[0].is_test);
+        assert!(!r.functions[1].is_test);
+    }
+
+    #[test]
+    fn java_modern_control_flow_and_pattern_bindings() {
+        let r = java("class A { int a(int x) { return switch (x) { case 1 -> 10; default -> 0; }; } int b(int x) { return x == 1 ? 10 : 0; } }");
+        assert!(r.parse_errors.is_empty());
+        assert_ne!(r.normalized[0].tokens, r.normalized[1].tokens);
+        assert!(r.normalized[0].tokens.contains(&StructuralToken::Match));
+        assert!(r.normalized[1].tokens.contains(&StructuralToken::If));
+        let r = java("class A { int a(Object o) { if (o instanceof String s) { return s.length(); } return 0; } int b(Object value) { if (value instanceof String text) { return text.length(); } return 0; } }");
+        assert!(r.parse_errors.is_empty());
+        assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+        let r = java("class A { void a(java.io.File f) throws Exception { try (var in = open(f)) { for (var line : in) { use(line); } } catch (IOException e) { log(e); } finally { done(); } } void b(java.io.File g) throws Exception { try (var r = open(g)) { for (var l : r) { use(l); } } catch (IOException ex) { log(ex); } finally { done(); } } }");
+        assert!(r.parse_errors.is_empty());
+        assert_eq!(r.normalized[0].tokens, r.normalized[1].tokens);
+        assert!(r.normalized[0].tokens.contains(&StructuralToken::Try));
+        assert!(r.normalized[0].tokens.contains(&StructuralToken::Finally));
+        assert!(r.normalized[0].tokens.contains(&StructuralToken::For));
+    }
+
+    #[test]
+    fn java_trivial_accessors_are_skipped_but_real_methods_kept() {
+        let r = java("class A { int x; int getX() { return x; } int getThisX() { return this.x; } void setX(int x) { this.x = x; } void setRaw(int v) { x = v; } int twice() { return x * 2; } A withX(int x) { this.x = x; return this; } void bump() { this.x += 1; } }");
+        let names: Vec<_> = r
+            .functions
+            .iter()
+            .map(|f| f.function_name.as_str())
+            .collect();
+        assert_eq!(names, ["twice", "withX", "bump"]);
+    }
+
+    #[test]
+    fn java_anonymous_and_lambda_bodies_do_not_pollute_parent_calls() {
+        let r = java("class A { void outer() { Runnable r = new Runnable() { public void run() { danger(); } }; Runnable s = () -> risky(); safe(); } }");
+        assert!(r.parse_errors.is_empty());
+        let outer = &r.functions[0];
+        assert_eq!(outer.function_name, "outer");
+        assert!(outer.called_functions.contains("safe"));
+        assert!(outer.called_functions.contains("new Runnable"));
+        assert!(!outer.called_functions.contains("danger"));
+        assert!(!outer.called_functions.contains("risky"));
+        assert_eq!(r.functions.len(), 3);
+    }
+
+    #[test]
+    fn java_varargs_and_inferred_lambda_parameters() {
+        let r = java("class A { int a(String... names) { return names.length; } void b() { java.util.function.BiFunction<Integer, Integer, Integer> f = (p, q) -> p + q; } }");
+        assert_eq!(r.functions[0].parameters, ["names"]);
+        let lambda = r
+            .functions
+            .iter()
+            .find(|f| f.kind == FunctionKind::Lambda)
+            .unwrap();
+        assert_eq!(lambda.parameters, ["p", "q"]);
+        assert_eq!(lambda.function_name, "f");
+    }
+
+    #[test]
+    fn collapse_arguments_keeps_receiver_chain() {
+        assert_eq!(collapse_arguments("a.b(x, y(z)).c"), "a.b(..).c");
+        assert_eq!(collapse_arguments("client"), "client");
+        assert_eq!(collapse_arguments("this.client"), "this.client");
     }
 }

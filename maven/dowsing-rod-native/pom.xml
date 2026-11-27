@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.github.shkb42</groupId>
+    <artifactId>dowsing-rod-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>dowsing-rod-native</artifactId>
+  <packaging>pom</packaging>
+
+  <name>Dowsing Rod native binaries</name>
+  <description>Prebuilt dowsing-rod executables, one classifier jar per platform
+    (linux-x86_64, linux-aarch_64, linux-x86_64-musl, linux-aarch_64-musl, osx-x86_64,
+    osx-aarch_64, windows-x86_64). Used by dowsing-rod-maven-plugin and dowsing-rod-java.</description>
+
+  <!-- Binaries are staged into native/<classifier>/ by scripts/package-maven.mjs. Only staged
+       classifiers are packaged, so a local build needs just the host binary; the release
+       workflow checks that every classifier is present. -->
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <skipIfEmpty>true</skipIfEmpty>
+          <archive>
+            <addMavenDescriptor>false</addMavenDescriptor>
+          </archive>
+        </configuration>
+        <executions>
+          <execution>
+            <id>linux-x86_64</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>linux-x86_64</classifier>
+              <classesDirectory>${project.basedir}/native/linux-x86_64</classesDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>linux-aarch_64</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>linux-aarch_64</classifier>
+              <classesDirectory>${project.basedir}/native/linux-aarch_64</classesDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>linux-x86_64-musl</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>linux-x86_64-musl</classifier>
+              <classesDirectory>${project.basedir}/native/linux-x86_64-musl</classesDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>linux-aarch_64-musl</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>linux-aarch_64-musl</classifier>
+              <classesDirectory>${project.basedir}/native/linux-aarch_64-musl</classesDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>osx-x86_64</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>osx-x86_64</classifier>
+              <classesDirectory>${project.basedir}/native/osx-x86_64</classesDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>osx-aarch_64</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>osx-aarch_64</classifier>
+              <classesDirectory>${project.basedir}/native/osx-aarch_64</classesDirectory>
+            </configuration>
+          </execution>
+          <execution>
+            <id>windows-x86_64</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+            <configuration>
+              <classifier>windows-x86_64</classifier>
+              <classesDirectory>${project.basedir}/native/windows-x86_64</classesDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,5 @@
+# zizmor (GitHub Actions security audit) configuration, used by security.yml.
+rules:
+  # Local actions and reusable workflows use the long-supported "./" form on purpose.
+  self-repository:
+    disable: true

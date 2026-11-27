@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const stage = resolve(process.argv[2] || 'dist/npm');
-const platform = `${process.platform}-${process.arch}`;
+const musl = process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime;
+const platform = `${process.platform}-${process.arch}${musl ? '-musl' : ''}`;
 const work = mkdtempSync(join(tmpdir(), 'dowsing-npm-'));
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 function run(command, args, cwd = work, expected = 0) {
@@ -32,12 +33,12 @@ try {
   assert.match(run(npm, ['exec', '--offline', '--', 'dowsing-rod', 'version']), new RegExp(version.replaceAll('.', '\\.')));
   const fixture = join(root, 'tests/languages');
   const result = JSON.parse(run(process.execPath, [launcher, 'scan', fixture, '--format', 'json', '--no-cache', '--fail-on-error']));
-  assert.equal(result.statistics.files_scanned, 10);
-  assert.equal(result.functions.length, 37);
+  assert.equal(result.statistics.files_scanned, 11);
+  assert.equal(result.functions.length, 43);
   assert.equal(result.parse_errors.length, 0);
   assert.deepEqual(
     new Set(result.functions.map(f => f.language)),
-    new Set(['javascript', 'typescript', 'c', 'cpp', 'csharp', 'rust', 'verilog', 'system_verilog', 'vhdl']),
+    new Set(['javascript', 'typescript', 'c', 'cpp', 'csharp', 'java', 'rust', 'verilog', 'system_verilog', 'vhdl']),
   );
   assert.match(run(process.execPath, [launcher, 'scan', fixture, '--ai', '--max-tokens', '1000', '--no-cache']), /LANGUAGE/);
   const lines = run(process.execPath, [launcher, 'scan', fixture, '--format', 'jsonl', '--no-cache']).trim().split('\n').map(JSON.parse);

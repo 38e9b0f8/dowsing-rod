@@ -1,19 +1,32 @@
 name: CI
 
+# Build and test every channel on every pull request and on main. Nothing here publishes.
+# Security scanning lives in security.yml and scorecard.yml.
 on:
   push:
     branches: ["main"]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   legacy-linux:
     name: Linux glibc 2.17 compatibility
     runs-on: ubuntu-22.04
-
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
           targets: x86_64-unknown-linux-gnu
       - uses: ./.github/actions/toolchain
         with:
@@ -27,45 +40,40 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE/target/x86_64-unknown-linux-gnu/release/dowsing-rod:/dowsing-rod:ro" quay.io/pypa/manylinux2014_x86_64 /dowsing-rod version
 
   test:
-    name: Rust and Python
+    name: Rust, Python, npm, and NuGet
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Check formatting
         run: cargo fmt --all --check
-
       - name: Run clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
       - name: Run tests
         run: cargo test --all-targets --locked
 
-      - name: Install Python package
+      # Python: build and install the package from source (wheel publishing is a TODO, see python-release.yml).
+      - name: Build and install the Python package
         run: |
           python -m pip install --upgrade pip
           python -m pip install .
-
       - name: Smoke test CLI and Python API
         run: |
           dowsing-rod version
           dowsing-rod scan tests/fixtures --format json --no-cache
           dowsing-rod scan tests/fixtures --ai --max-tokens 1200 --no-cache
           python -c "import dowsing_rod; print(dowsing_rod.__version__)"
-
       - name: Smoke test init and auto
         run: |
           # This repository's pyproject.toml configures dowsing-rod, so auto works from a subfolder.
@@ -80,23 +88,16 @@ jobs:
           dowsing-rod auto "$PROJECT"
           test -f "$PROJECT/.dowsing-rod-cache/.gitignore"
 
-      - name: Set up Node
-        uses: ./.github/actions/toolchain
+      - uses: ./.github/actions/toolchain
         with:
           node: true
-
+          dotnet: true
       - name: Test npm packed install
         run: |
           cargo build -p dowsing-cli --release --locked
           node scripts/package-npm.mjs linux-x64 target/release/dowsing-rod
           node scripts/package-npm.mjs launcher -
           node scripts/test-npm.mjs
-
-      - name: Set up .NET
-        uses: ./.github/actions/toolchain
-        with:
-          dotnet: true
-
       - name: Test packed NuGet tool
         run: |
           node scripts/package-nuget.mjs linux-x64 target/release/dowsing-rod nuget/dowsing-rod/native
@@ -106,3 +107,74 @@ jobs:
           dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error
+
+  maven:
+    name: Maven plugin (${{ matrix.os }}, JDK ${{ matrix.java }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Java 8 is the supported floor; 21 is the build JDK.
+          - { os: ubuntu-latest, java: '8' }
+          - { os: ubuntu-latest, java: '21' }
+          - { os: windows-latest, java: '21' }
+          - { os: macos-latest, java: '21' }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: ./.github/actions/toolchain
+        with:
+          node: true
+          java: ${{ matrix.java }}
+      - name: Build the host binary and stage it for dowsing-rod-native
+        shell: bash
+        run: |
+          cargo build -p dowsing-cli --release --locked
+          node scripts/package-maven.mjs host target/release/dowsing-rod${{ runner.os == 'Windows' && '.exe' || '' }}
+          node scripts/version.mjs --maven-config
+      - name: Build, unit-test, and run the plugin integration tests
+        working-directory: maven
+        run: ${{ runner.os == 'Windows' && '.\mvnw.cmd' || 'sh ./mvnw' }} -B -ntp --strict-checksums install "-Ddowsing.requireNative=true"
+
+  musl:
+    name: musl / Alpine (static binary, npm, Maven)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: ./.github/actions/toolchain
+        with:
+          node: true
+          zig: true
+      - name: Build a static musl binary
+        run: cargo zigbuild -p dowsing-cli --release --locked --target x86_64-unknown-linux-musl
+      - name: Check it is static and runs on Alpine
+        run: |
+          BINARY=target/x86_64-unknown-linux-musl/release/dowsing-rod
+          test -z "$(readelf --program-headers "$BINARY" | grep INTERP || true)"
+          docker run --rm -v "$GITHUB_WORKSPACE:/work:ro" -w /work alpine:3.20 "$BINARY" scan tests/languages --format json --no-cache --fail-on-error > /dev/null
+      - name: Test the npm launcher on Alpine
+        run: |
+          node scripts/package-npm.mjs linux-x64-musl target/x86_64-unknown-linux-musl/release/dowsing-rod
+          node scripts/package-npm.mjs launcher -
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work node:24-alpine node scripts/test-npm.mjs
+      - name: Build and test the Maven plugin on Alpine
+        run: |
+          node scripts/package-maven.mjs linux-x86_64-musl target/x86_64-unknown-linux-musl/release/dowsing-rod
+          node scripts/version.mjs --maven-config
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work/maven eclipse-temurin:21-jdk-alpine \
+            sh ./mvnw -B -ntp --strict-checksums install -Ddowsing.requireNative=true

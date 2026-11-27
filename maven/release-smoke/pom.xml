@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Not a module of the build. The Maven release workflow copies this project, with the Java
+     provider fixtures, to a clean folder on every platform and runs it against the staged
+     repository, exactly as a user's build would resolve the plugin and its native binary.
+
+     mvn -B -Dstaging.url=file:///path/to/staging -Ddowsing-rod.version=X.Y.Z verify -->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>it.dowsing-rod</groupId>
+  <artifactId>release-smoke</artifactId>
+  <version>1.0</version>
+  <packaging>pom</packaging>
+
+  <pluginRepositories>
+    <pluginRepository>
+      <id>staging</id>
+      <url>${staging.url}</url>
+    </pluginRepository>
+  </pluginRepositories>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>io.github.shkb42</groupId>
+        <artifactId>dowsing-rod-maven-plugin</artifactId>
+        <version>${dowsing-rod.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <failOnError>true</failOnError>
+              <useCache>false</useCache>
+              <outputFile>${project.build.directory}/dowsing-rod.json</outputFile>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

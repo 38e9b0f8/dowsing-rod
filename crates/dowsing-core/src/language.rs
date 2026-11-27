@@ -17,6 +17,7 @@ pub enum Language {
     Cpp,
     #[serde(rename = "csharp")]
     CSharp,
+    Java,
     Rust,
     Verilog,
     SystemVerilog,
@@ -39,6 +40,7 @@ impl Language {
                 Self::Cpp
             }
             "cs" => Self::CSharp,
+            "java" => Self::Java,
             "rs" => Self::Rust,
             "v" | "vh" => Self::Verilog,
             "sv" | "svh" => Self::SystemVerilog,
@@ -65,6 +67,7 @@ impl Language {
             Self::C => tree_sitter_c::LANGUAGE.into(),
             Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
             Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Self::Java => tree_sitter_java::LANGUAGE.into(),
             Self::Rust => tree_sitter_rust::LANGUAGE.into(),
             Self::Verilog | Self::SystemVerilog => tree_sitter_verilog::LANGUAGE.into(),
             Self::Vhdl => tree_sitter_vhdl::LANGUAGE.into(),
@@ -82,6 +85,7 @@ impl std::fmt::Display for Language {
             Self::C => "c",
             Self::Cpp => "cpp",
             Self::CSharp => "csharp",
+            Self::Java => "java",
             Self::Rust => "rust",
             Self::Verilog => "verilog",
             Self::SystemVerilog => "system_verilog",

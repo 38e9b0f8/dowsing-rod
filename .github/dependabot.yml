@@ -1,0 +1,38 @@
+# Weekly, grouped dependency updates. Actions are SHA-pinned; Dependabot bumps the SHA and the
+# version comment together. The cooldown lets a new release age a few days before we take it,
+# which avoids pulling in a compromised release that is caught and yanked quickly.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      cargo-minor: { update-types: [minor, patch] }
+
+  - package-ecosystem: maven
+    directory: /maven
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    ignore:
+      # The Maven API dependencies are the oldest supported Maven (3.6.3), on purpose.
+      - dependency-name: "org.apache.maven:*"
+    groups:
+      maven-plugins: { patterns: ["*"] }
+
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+
+  - package-ecosystem: nuget
+    directory: /nuget
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }

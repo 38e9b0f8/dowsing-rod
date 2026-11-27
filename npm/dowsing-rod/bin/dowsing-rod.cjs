@@ -2,14 +2,12 @@
 'use strict';
 const { spawnSync } = require('node:child_process');
 const { version, optionalDependencies } = require('../package.json');
-const packageName = `dowsing-rod-native-${process.platform}-${process.arch}`;
+// Linux without a glibc runtime is musl (Alpine and similar), served by static builds.
+const musl = process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime;
+const packageName = `dowsing-rod-native-${process.platform}-${process.arch}${musl ? '-musl' : ''}`;
 
 if (!Object.hasOwn(optionalDependencies, packageName)) {
-  console.error(`dowsing-rod: unsupported platform ${process.platform}/${process.arch}.`);
-  process.exit(1);
-}
-if (process.platform === 'linux' && !process.report.getReport().header.glibcVersionRuntime) {
-  console.error('dowsing-rod: the prebuilt Linux binaries require glibc; musl is not supported yet.');
+  console.error(`dowsing-rod: unsupported platform ${process.platform}/${process.arch}${musl ? ' (musl)' : ''}.`);
   process.exit(1);
 }
 let executable;

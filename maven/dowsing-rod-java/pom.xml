@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.github.shkb42</groupId>
+    <artifactId>dowsing-rod-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+
+  <artifactId>dowsing-rod-java</artifactId>
+  <packaging>jar</packaging>
+
+  <name>Dowsing Rod for Java</name>
+  <description>Java 8+ API for Dowsing Rod: locates the native dowsing-rod executable for the
+    current platform, verifies it, runs scans, and parses the JSON result. No dependencies.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+      </resource>
+      <!-- SHA-256 of each staged native binary of this same version. The extractor checks
+           the binary it runs against these, so a swapped native jar fails closed. -->
+      <resource>
+        <directory>${project.basedir}/../dowsing-rod-native/native/checksums</directory>
+        <targetPath>META-INF/dowsing-rod/checksums</targetPath>
+        <includes>
+          <include>*.sha256</include>
+        </includes>
+      </resource>
+      <resource>
+        <directory>${dowsing.repo.root}</directory>
+        <targetPath>META-INF</targetPath>
+        <includes>
+          <include>LICENSE</include>
+          <include>THIRD_PARTY_NOTICES.md</include>
+        </includes>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <dowsing.repo.root>${dowsing.repo.root}</dowsing.repo.root>
+            <dowsing.native.dir>${project.basedir}/../dowsing-rod-native/native</dowsing.native.dir>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Automatic-Module-Name>io.github.dowsingrod</Automatic-Module-Name>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

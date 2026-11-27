@@ -8,10 +8,10 @@ if (rid is null)
     return 1;
 }
 
+// musl (Alpine and similar) uses static builds in their own folders.
 if (OperatingSystem.IsLinux() && RuntimeInformation.RuntimeIdentifier.Contains("musl", StringComparison.OrdinalIgnoreCase))
 {
-    Console.Error.WriteLine("dowsing-rod: the prebuilt Linux binaries require glibc; musl is not supported yet.");
-    return 1;
+    rid = rid.Replace("linux-", "linux-musl-", StringComparison.Ordinal);
 }
 
 var executable = Path.Combine(

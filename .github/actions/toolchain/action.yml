@@ -1,7 +1,8 @@
 name: Toolchain
 description: >-
   Install the pinned build tools. Every tool version the workflows use is set here,
-  so a bump is a one-line change. Rust stays on stable via dtolnay/rust-toolchain.
+  so a bump is a one-line change. Actions are pinned to full commit SHAs (Dependabot
+  keeps them current); Rust stays on stable via dtolnay/rust-toolchain in each job.
 
 inputs:
   node:
@@ -16,25 +17,65 @@ inputs:
   dotnet:
     description: Install the .NET SDK used to pack the NuGet tool.
     default: "false"
+  java:
+    description: >-
+      Install a JDK for the Maven build. "true" installs the default below; a version
+      number such as "8" installs that one (the library and plugin support Java 8+).
+      Maven itself is pinned by maven/.mvn/wrapper/maven-wrapper.properties.
+    default: "false"
+  cache:
+    description: >-
+      Restore and save the Maven dependency cache. Release workflows pass "false" so a
+      published artifact never depends on a cache another workflow run could have written.
+    default: "true"
+  maven-central:
+    description: >-
+      Configure Maven for publishing to Maven Central: server id "central" reading
+      MAVEN_CENTRAL_USERNAME / MAVEN_CENTRAL_PASSWORD, and the signing key below.
+      Never caches.
+    default: "false"
+  gpg-private-key:
+    description: ASCII-armored GPG key that signs Maven Central artifacts (with maven-central).
+    default: ""
 
 runs:
   using: composite
   steps:
     - if: inputs.node == 'true'
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: "24"
         registry-url: ${{ inputs.registry-url }}
+        package-manager-cache: false
     - if: inputs.zig == 'true'
-      uses: goto-bus-stop/setup-zig@v2
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
       with:
         version: "0.14.0"
+        use-cache: false
     - if: inputs.zig == 'true'
       name: Install cargo-zigbuild
       shell: bash
       run: cargo install cargo-zigbuild --version 0.23.4 --locked
     - if: inputs.dotnet == 'true'
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
       with:
         # Keep the major version in step with <TargetFramework> in nuget/dowsing-rod/DowsingRod.csproj.
         dotnet-version: "8.0.x"
+    - if: inputs.java != 'false' && inputs.maven-central != 'true'
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        # Default JDK for building and releasing the Maven artifacts.
+        java-version: ${{ inputs.java == 'true' && '21' || inputs.java }}
+        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
+        cache-dependency-path: maven/**/pom.xml
+    - if: inputs.maven-central == 'true'
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        java-version: "21"
+        server-id: central
+        server-username: MAVEN_CENTRAL_USERNAME
+        server-password: MAVEN_CENTRAL_PASSWORD
+        gpg-private-key: ${{ inputs.gpg-private-key }}
+        gpg-passphrase: MAVEN_GPG_PASSPHRASE

@@ -4,7 +4,7 @@
 
 # Dowsing Rod
 
-Dowsing Rod finds structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Rust, Verilog, SystemVerilog, and VHDL. It is a Rust-native scanner with a standalone CLI and Python bindings, built for spotting duplicated flows, repeated procedural logic, adapter/strategy candidates, validation helpers, and other code shapes that ordinary text duplicate detectors miss.
+Dowsing Rod finds structural refactoring opportunities in Python, JavaScript/JSX, TypeScript/TSX, C, C++, C#, Java, Rust, Verilog, SystemVerilog, and VHDL. It is a Rust-native scanner with a standalone CLI, Python bindings, and a Maven plugin, built for spotting duplicated flows, repeated procedural logic, adapter/strategy candidates, validation helpers, and other code shapes that ordinary text duplicate detectors miss.
 
 It works offline. Source code is parsed locally, normalized locally, and rendered locally.
 
@@ -51,6 +51,12 @@ With .NET:
 dotnet tool install --global dowsing-rod
 ```
 
+With Maven (no Python, Node, or .NET required; see [Maven](#maven)):
+
+```bash
+mvn io.github.shkb42:dowsing-rod-maven-plugin:scan
+```
+
 From a local checkout:
 ```bash
 pip install .
@@ -63,9 +69,9 @@ cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-The project uses PyO3 and maturin for Python packaging. The npm and NuGet launchers select matching prebuilt Rust binaries. Neither has install scripts or runtime downloads.
+The project uses PyO3 and maturin for Python packaging. The npm and NuGet launchers and the Maven plugin select matching prebuilt Rust binaries. None of them has install scripts or downloads anything outside its package manager.
 
-Prebuilt command-line binaries support macOS x64/arm64, Windows x64, and glibc 2.17+ on Linux x64/arm64. That covers RHEL 8–10, current Ubuntu, Debian, Fedora, and SUSE releases. See [platform support](docs/platform-support.md) for runtime floors. musl/Alpine and Windows arm64 are not currently provided.
+Prebuilt command-line binaries support macOS x64/arm64, Windows x64, and glibc 2.17+ on Linux x64/arm64. That covers RHEL 8–10, current Ubuntu, Debian, Fedora, and SUSE releases. See [platform support](docs/platform-support.md) for runtime floors. Static musl builds cover Alpine and other musl Linux on x64/arm64 (npm, NuGet, and Maven). Windows arm64 is not currently provided.
 
 ## Quick Start
 
@@ -101,6 +107,13 @@ Emit structured JSON:
 ```bash
 dowsing-rod scan . --format json
 dowsing-rod scan . --format jsonl
+```
+
+In a Maven project, with no install needed (see [Maven](#maven) for adding it to `pom.xml` and gating builds):
+
+```bash
+mvn io.github.shkb42:dowsing-rod-maven-plugin:scan
+mvn io.github.shkb42:dowsing-rod-maven-plugin:scan -Ddowsing-rod.ai=true -Ddowsing-rod.maxTokens=4000
 ```
 
 ## Example Human Output
@@ -209,6 +222,133 @@ dowsing_rod.version() -> str
 dowsing_rod.clear_cache(path=".") -> int
 ```
 
+## Maven
+
+The Maven plugin runs the same native scanner as the CLI. On first use it resolves a prebuilt binary for the build machine (`io.github.shkb42:dowsing-rod-native`, one classifier jar per platform) from your usual Maven repositories, and checks its SHA-256 before running it. You need Java 8+ and Maven 3.6.3+; no Python, Node, or .NET. Mirrors, repository managers, and offline mode (`-o`) work as for any other plugin.
+
+### 1. Try it without changing your POM
+
+From the root of any Maven project:
+
+```bash
+mvn io.github.shkb42:dowsing-rod-maven-plugin:scan
+```
+
+It prints the human-readable report to the build log. In a multi-module project it runs once at the root and scans every module, so it also finds code duplicated *between* modules.
+
+### 2. Add it to `pom.xml`
+
+```xml
+<build>
+  <plugins>
+    <plugin>
+      <groupId>io.github.shkb42</groupId>
+      <artifactId>dowsing-rod-maven-plugin</artifactId>
+      <version>0.3.0</version>
+      <executions>
+        <execution>
+          <goals>
+            <goal>scan</goal>   <!-- runs in the verify phase -->
+          </goals>
+        </execution>
+      </executions>
+    </plugin>
+  </plugins>
+</build>
+```
+
+`mvn verify` now reports refactoring opportunities on every build. With the plugin declared, the short prefix works: `mvn dowsing-rod:scan`. To use the prefix in any project, add `<pluginGroup>io.github.shkb42</pluginGroup>` to `~/.m2/settings.xml`.
+
+### 3. Common setups
+
+**Fail CI when duplication is found.** Use `check` instead of `scan`. Thresholds are off unless set:
+
+```xml
+<execution>
+  <goals><goal>check</goal></goals>
+  <configuration>
+    <maxClustersFound>0</maxClustersFound>         <!-- fail on any finding... -->
+    <minRefactoringValue>100</minRefactoringValue> <!-- ...worth at least this much -->
+    <failOnError>true</failOnError>                <!-- and on files that do not parse -->
+    <outputFile>${project.build.directory}/dowsing-rod.json</outputFile>
+  </configuration>
+</execution>
+```
+
+`check` prints a summary of the top clusters, with file and line references, before it fails. It also accepts `maxHighValueClusters` and `failOnClassifications` (for example `duplicate` or `strategy_candidate`).
+
+**Hand findings to a coding agent:**
+
+```bash
+mvn dowsing-rod:scan -Ddowsing-rod.ai=true -Ddowsing-rod.maxTokens=4000
+```
+
+**Keep a JSON report as a CI artifact:**
+
+```bash
+mvn dowsing-rod:scan -Ddowsing-rod.format=json -Ddowsing-rod.outputFile=target/dowsing-rod.json
+```
+
+**Keep settings in `dowsing-rod.toml`, shared with the CLI, npm, and other tools:**
+
+```bash
+mvn dowsing-rod:init    # writes dowsing-rod.toml at the project root
+mvn dowsing-rod:auto    # scans using only that file
+```
+
+Options in the POM or `-D` override the file. Options you leave out come from it.
+
+**Skip generated code and tests:**
+
+```xml
+<configuration>
+  <excludes>
+    <exclude>**/generated/**</exclude>
+    <exclude>src/test/**</exclude>
+  </excludes>
+</configuration>
+```
+
+`target/`, `build/`, `.gradle/`, and `.gitignore`d files are already skipped.
+
+**Skip it for one build:** `mvn verify -Ddowsing-rod.skip=true`.
+
+### 4. Reference
+
+| Goal | Does |
+|------|------|
+| `scan` | `dowsing-rod scan`, with POM options overriding `dowsing-rod.toml` |
+| `check` | Scans and fails the build on `maxClustersFound`, `maxHighValueClusters`, or `failOnClassifications`. With no threshold set, it only reports. |
+| `auto` | `dowsing-rod auto`: the config file only; fails without one |
+| `init` | Writes `dowsing-rod.toml` (`-Ddowsing-rod.force=true` to overwrite) |
+| `cache-clear` | Deletes `.dowsing-rod-cache/` |
+| `help` | Lists goals and parameters (`mvn dowsing-rod:help -Ddetail=true`) |
+
+Scan options mirror the CLI flags: `minSimilarity`, `normalization`, `format`, `ai`, `maxClusters`, `maxTokens`, `jobs`, `excludes`, `includes`, `useCache`, `failOnError`. Each has a `-Ddowsing-rod.<name>` property. Plugin options are:
+
+- `outputFile`: also write the report to a file.
+- `skip`
+- `perModule`: run in every module for its own folder, instead of once at the root.
+- `path`: what to scan.
+- `binaryPath`: run your own build of the CLI, for platforms without a prebuilt binary.
+
+None of the scan options has a default, so an unset option comes from `dowsing-rod.toml`. A set option always wins, even when it equals the built-in default. If only a child module declares the plugin, it runs in that module.
+
+To call the scanner from Java code, use the `dowsing-rod-java` library: `DowsingRod.locate().scan(path, new ScanOptions())` returns a typed `ScanResult`. Full parameter tables are in [maven/README.md](maven/README.md).
+
+### Using it before it is on Maven Central
+
+To try a local build, install it into your local repository. You need Rust, Node 22+, and a JDK:
+
+```bash
+cargo build -p dowsing-cli --release
+node scripts/package-maven.mjs host target/release/dowsing-rod   # .exe on Windows
+node scripts/version.mjs --maven-config
+cd maven && ./mvnw install                                         # mvnw.cmd on Windows
+```
+
+Any project on this machine can then use the plugin at the version in `Cargo.toml`, exactly as above. The local build contains only the binary for this machine's platform.
+
 ## Configuration
 
 Dowsing Rod reads a standalone `dowsing-rod.toml`, or `[tool.dowsing-rod]` in `pyproject.toml`. If both exist in one folder, `dowsing-rod.toml` wins. It uses the nearest configured folder at or above the scanned path, and that folder is the project root for the cache and for displayed paths. With no configuration anywhere above, the scanned folder is the root.
@@ -303,7 +443,7 @@ The core pipeline is:
 
 ```text
 discover supported source files
-parse Python with RustPython and JavaScript, TypeScript, C, C++, C#, Rust, Verilog, SystemVerilog, and VHDL with embedded Tree-sitter grammars
+parse Python with RustPython and JavaScript, TypeScript, C, C++, C#, Java, Rust, Verilog, SystemVerilog, and VHDL with embedded Tree-sitter grammars
 extract functions, methods, lambdas, HDL tasks/functions, and HDL procedural blocks
 normalize scoped structure while preserving calls, member access, operators, literals, and HDL timing/assignment syntax
 fingerprint normalized tokens
@@ -318,6 +458,8 @@ render human, AI, JSON, or JSONL output
 Normalization is deliberately semantic enough to avoid the most obvious false positives. Calls, member access, operators, control flow, literals, parameter shape, and complexity all contribute to the score. Clusters are isolated by language; JavaScript and TypeScript are separate languages.
 
 HDL is deliberately conservative. `always` and `process` blocks are extracted but never reported as refactoring candidates. Functions, tasks, and procedures appear only for exact structural matches, as `hdl_review_required` with no reduction estimate. Treat those as a prompt to inspect clocks, resets, event/sensitivity controls, widths, assignment style, resource mapping, timing, and simulation semantics. UVM-style `.svh` headers are recovered for discovery when the embedded grammar cannot parse their macros; recovered units are never clustered.
+
+Java analysis covers methods, constructors, record compact constructors, lambdas, and methods of anonymous and local classes. Abstract and interface methods without a body are skipped. So are trivial getters and setters (a body that only returns or assigns a field), which are identical by design and would otherwise crowd out real findings. Annotations and modifiers are recorded as metadata (`@Test`, `@ParameterizedTest`, and `*Test`/`*IT` classes mark tests) rather than structure, so `public` versus `protected` does not hide a duplicate.
 
 See [docs/algorithms.md](docs/algorithms.md) for implementation details.
 
@@ -363,9 +505,21 @@ The version is set in one place: `version` under `[workspace.package]` in `Cargo
 2. Run `cargo update --workspace` to refresh `Cargo.lock` (builds use `--locked`).
 3. Add a `CHANGELOG.md` entry, then tag `v<version>`.
 
-Tool versions for CI and releases (Node, Zig, cargo-zigbuild, .NET) are likewise set once, in `.github/actions/toolchain/action.yml`.
+Tool versions for CI and releases (Node, Zig, cargo-zigbuild, .NET, Java) are likewise set once, in `.github/actions/toolchain/action.yml`. Maven is pinned by the Maven Wrapper in `maven/.mvn/wrapper/maven-wrapper.properties`. The Maven build takes its version from `Cargo.toml` too: `node scripts/version.mjs --maven-config` writes `maven/.mvn/maven.config`, and a test fails if the two ever differ.
 
-The release workflows build and test every package before publishing. PyPI and NuGet use trusted publishing. npm uses trusted publishing after its first release; set a temporary `NPM_TOKEN` in the `npm-release` environment for that bootstrap, configure the publisher for `dowsing-rod` and the five `dowsing-rod-native-*` packages, then delete the token. Configure environment approval before the first release. Dispatch the npm and NuGet workflows from a matching `v<version>` tag with `publish` enabled.
+The release workflows build and test every package before publishing. PyPI publishing is currently disabled: `python-release.yml` builds and tests the wheels and sdist but does not upload them (see `TODO.md`). NuGet uses trusted publishing. npm uses trusted publishing after its first release; set a temporary `NPM_TOKEN` in the `npm-release` environment for that bootstrap, configure the publisher for `dowsing-rod` and the five `dowsing-rod-native-*` packages, then delete the token. Configure environment approval before the first release. Dispatch the npm and NuGet workflows from a matching `v<version>` tag with `publish` enabled.
+
+Maven Central has no trusted publishing. Before the first Maven release:
+
+1. Verify the `io.github.shkb42` namespace at [central.sonatype.com](https://central.sonatype.com).
+2. Create a Central Portal user token and a GPG signing key, and publish the public key to a keyserver.
+3. Add `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, and `MAVEN_GPG_PASSPHRASE` to a `maven-release` environment with required reviewers.
+
+`maven-release.yml` builds all seven native binaries and stages the Maven artifacts. It tests them from a clean project on Linux, macOS, Windows, and Alpine. Only then, from a `v<version>` tag with `publish` enabled and the environment approved, does it sign and publish them as one Central deployment. Central releases cannot be replaced, so dispatch it without `publish` first. The publish job also checks that the tag is on `main`, rebuilds and checks that every jar is byte-identical to the tested one, attaches a CycloneDX SBOM to each module, and records a GitHub build-provenance attestation (`gh attestation verify <jar> -R shkb42/dowsing-rod`).
+
+Security checks run in `security.yml` (CodeQL, zizmor and actionlint, gitleaks, cargo-deny with `deny.toml`, and dependency review on pull requests) and `scorecard.yml` (OpenSSF Scorecard). Dependabot keeps the SHA-pinned actions and the dependencies current.
+
+The npm musl packages, `dowsing-rod-native-linux-x64-musl` and `dowsing-rod-native-linux-arm64-musl`, are new package names. Bootstrap their trusted publishers the same way as the first npm release.
 
 <details>
 <summary>Regenerating the README demo GIF</summary>

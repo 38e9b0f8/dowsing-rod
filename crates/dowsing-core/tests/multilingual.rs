@@ -15,14 +15,15 @@ fn all_languages_extract_and_find_known_duplicates() {
         ..Default::default()
     })
     .unwrap();
-    assert_eq!(result.statistics.files_scanned, 10);
-    assert_eq!(result.statistics.functions_found, 37);
+    assert_eq!(result.statistics.files_scanned, 11);
+    assert_eq!(result.statistics.functions_found, 43);
     for language in [
         Language::TypeScript,
         Language::JavaScript,
         Language::C,
         Language::Cpp,
         Language::CSharp,
+        Language::Java,
         Language::Rust,
     ] {
         assert!(
@@ -156,7 +157,7 @@ fn discovery_handles_headers_extensions_and_exclusions() {
     let dir = tempfile::tempdir().unwrap();
     for (index, ext) in [
         "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "c", "h", "C", "cpp", "hpp", "cc",
-        "cxx", "cs", "rs", "v", "vh", "sv", "svh", "vhd", "vhdl", "py",
+        "cxx", "cs", "java", "rs", "v", "vh", "sv", "svh", "vhd", "vhdl", "py",
     ]
     .into_iter()
     .enumerate()
@@ -171,10 +172,14 @@ fn discovery_handles_headers_extensions_and_exclusions() {
         dowsing_core::discovery::discover_source_files(dir.path(), &[], &[])
             .unwrap()
             .len(),
-        24
+        25
     );
     assert_eq!(Language::from_path(Path::new("a.C")), Some(Language::Cpp));
     assert_eq!(Language::from_path(Path::new("a.rs")), Some(Language::Rust));
+    assert_eq!(
+        Language::from_path(Path::new("A.java")),
+        Some(Language::Java)
+    );
     assert_eq!(
         Language::from_path(Path::new("a.js")),
         Some(Language::JavaScript)
@@ -232,4 +237,60 @@ fn standalone_configuration_works_without_python_manifest() {
         config.normalization,
         dowsing_core::types::NormalizationLevel::Strict
     );
+}
+
+#[test]
+fn java_never_pairs_with_other_languages() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, source) in [
+        (
+            "Same.java",
+            "class Same { int same(int x) { return x + 1; } }",
+        ),
+        (
+            "same.cs",
+            "class Same { int Same1(int x) { return x + 1; } }",
+        ),
+        ("same.ts", "function same(x: number) { return x + 1; }"),
+    ] {
+        fs::write(dir.path().join(name), source).unwrap();
+    }
+    let result = dowsing_core::scan(ScanConfig {
+        path: dir.path().to_path_buf(),
+        use_cache: false,
+        fail_on_error: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(result.statistics.functions_found, 3);
+    assert_eq!(result.statistics.candidate_pairs_generated, 0);
+    assert!(result.clusters.is_empty());
+}
+
+#[test]
+fn java_provider_implementations_form_one_strategy_cluster() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/java_providers");
+    let result = dowsing_core::scan(ScanConfig {
+        path,
+        use_cache: false,
+        fail_on_error: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(result.statistics.files_scanned, 3);
+    assert!(result
+        .functions
+        .iter()
+        .all(|f| f.language == Language::Java));
+    let charge = result
+        .clusters
+        .iter()
+        .find(|c| {
+            c.function_indices
+                .iter()
+                .all(|&i| result.functions[i].function_name == "charge")
+        })
+        .expect("the three charge methods should cluster");
+    assert_eq!(charge.function_indices.len(), 3);
+    assert!(charge.differences.iter().any(|d| d.contains("Client")));
 }

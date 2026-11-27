@@ -1,0 +1,203 @@
+name: Maven release
+
+# Maven Central release for io.github.shkb42:dowsing-rod-*. Run it by hand (Actions → Maven release).
+#
+#   native         build and test the seven platform binaries            (build-native.yml)
+#   package        assemble every artifact, with SBOMs, into a file staging repository
+#   test-installed resolve and run the staged plugin from a clean project on every platform
+#   publish        only from a v* tag on main, with "publish" checked, after maven-release
+#                  environment approval: rebuild, prove the jars are byte-identical to the
+#                  tested ones, sign, publish atomically to Central, and attest provenance.
+#
+# With "publish" unchecked (the default) it is a full dry run. Central releases are immutable.
+# Hardening: SHA-pinned actions, read-only token by default, no caches, no persisted git
+# credentials, secrets only in the approved publish job.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to Maven Central (needs a v* tag on main and maven-release approval)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maven-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    uses: ./.github/workflows/build-native.yml
+    with:
+      package: maven
+
+  package:
+    name: Package and stage
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/toolchain
+        with:
+          node: true
+          java: true
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: maven-native-*
+          path: maven/dowsing-rod-native/native
+          merge-multiple: true
+      - name: Check staged native binaries and checksums
+        run: |
+          for classifier in linux-x86_64 linux-aarch_64 linux-x86_64-musl linux-aarch_64-musl osx-x86_64 osx-aarch_64 windows-x86_64; do
+            suffix=""; [ "$classifier" = windows-x86_64 ] && suffix=".exe"
+            binary="maven/dowsing-rod-native/native/$classifier/native/$classifier/dowsing-rod$suffix"
+            expected="$(cat "maven/dowsing-rod-native/native/checksums/$classifier.sha256")"
+            actual="$(sha256sum "$binary" | cut -d' ' -f1)"
+            test "$expected" = "$actual" || { echo "::error::checksum mismatch for $classifier"; exit 1; }
+            echo "$classifier $actual"
+          done
+      - run: node scripts/version.mjs --maven-config
+      - name: Build, test, and stage into a local repository
+        working-directory: maven
+        run: sh ./mvnw -B -ntp --strict-checksums deploy -P sbom -Ddowsing.requireNative=true "-DaltDeploymentRepository=staging::file://$GITHUB_WORKSPACE/dist/maven-staging"
+      - name: Check every artifact is staged
+        run: |
+          VERSION="$(node scripts/version.mjs)"
+          BASE="dist/maven-staging/io/github/shkb42"
+          test -f "$BASE/dowsing-rod-parent/$VERSION/dowsing-rod-parent-$VERSION.pom"
+          test -f "$BASE/dowsing-rod-java/$VERSION/dowsing-rod-java-$VERSION.jar"
+          test -f "$BASE/dowsing-rod-maven-plugin/$VERSION/dowsing-rod-maven-plugin-$VERSION.jar"
+          test "$(find "$BASE/dowsing-rod-native/$VERSION" -name "dowsing-rod-native-$VERSION-*.jar" | wc -l)" -eq 7
+          for artifact in dowsing-rod-java dowsing-rod-maven-plugin dowsing-rod-native; do
+            test -f "$BASE/$artifact/$VERSION/$artifact-$VERSION-cyclonedx.json"
+          done
+          # Published POMs must carry the concrete version, not the unresolved literal ${revision}.
+          # shellcheck disable=SC2016
+          if grep -rl '${revision}' "$BASE" --include='*.pom'; then
+            echo "::error::unresolved \${revision} in the POMs above"; exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maven-staging
+          path: dist/maven-staging
+          if-no-files-found: error
+
+  test-installed:
+    name: Test staged release (${{ matrix.name }})
+    needs: package
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Java 8 is the floor; Temurin has no Java 8 build for Apple Silicon, so 11 there.
+          - { name: linux-x64, runner: ubuntu-latest, java: '8' }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, java: '8' }
+          - { name: macos-arm64, runner: macos-latest, java: '11' }
+          - { name: macos-x64, runner: macos-15-intel, java: '8' }
+          - { name: windows-x64, runner: windows-latest, java: '8' }
+          - { name: alpine-x64, runner: ubuntu-latest, alpine: true }
+          - { name: alpine-arm64, runner: ubuntu-24.04-arm, alpine: true }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/toolchain
+        with:
+          node: true
+          java: ${{ matrix.alpine && 'false' || matrix.java }}
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: maven-staging
+          path: dist/maven-staging
+      - name: Resolve and run the staged plugin from a clean project
+        if: ${{ !matrix.alpine }}
+        run: node scripts/test-maven-release.mjs dist/maven-staging
+      - name: Resolve and run the staged plugin on Alpine
+        if: matrix.alpine
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work eclipse-temurin:21-jdk-alpine \
+            sh -c 'apk add --no-cache nodejs > /dev/null && node scripts/test-maven-release.mjs dist/maven-staging'
+
+  publish:
+    name: Publish to Maven Central
+    if: inputs.publish && startsWith(github.ref, 'refs/tags/v')
+    needs: test-installed
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: maven-release
+    permissions:
+      contents: read
+      id-token: write # build provenance attestation (Sigstore)
+      attestations: write
+    steps:
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          # Audit first; once a release has run, switch to "block" with the endpoints it reports.
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/toolchain
+        with:
+          node: true
+          maven-central: true
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+      - name: Check tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/version.mjs --check-tag "$RELEASE_TAG"
+      - name: Check the tagged commit is on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_SHA is not on main; release only reviewed, merged commits"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: maven-native-*
+          path: maven/dowsing-rod-native/native
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: maven-staging
+          path: dist/maven-staging
+      - run: node scripts/version.mjs --maven-config
+      - name: Rebuild and sign
+        working-directory: maven
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: sh ./mvnw -B -ntp --strict-checksums verify -P release,sbom -DskipTests -Dinvoker.skip=true
+      # The build is reproducible (project.build.outputTimestamp), so every jar that is about to be
+      # published must equal, byte for byte, the jar that test-installed ran on seven platforms.
+      - name: Check the jars match the tested staging repository
+        run: |
+          count=0
+          while IFS= read -r staged; do
+            file="$(basename "$staged")"
+            artifact="$(basename "$(dirname "$(dirname "$staged")")")"
+            cmp "$staged" "maven/$artifact/target/$file" || { echo "::error::$file differs from the tested build"; exit 1; }
+            count=$((count + 1))
+          done < <(find dist/maven-staging -name '*.jar')
+          test "$count" -eq 9
+          echo "$count jars identical to the tested staging repository"
+      - name: Publish to Maven Central
+        working-directory: maven
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: sh ./mvnw -B -ntp --strict-checksums deploy -P release,sbom -DskipTests -Dinvoker.skip=true
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            maven/*/target/*.jar
+            maven/*/target/*-cyclonedx.json

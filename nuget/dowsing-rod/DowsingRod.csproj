@@ -8,7 +8,7 @@
     <ToolCommandName>dowsing-rod</ToolCommandName>
     <PackageId>dowsing-rod</PackageId>
     <PackageDescription>Structural refactoring intelligence for source code.</PackageDescription>
-    <PackageTags>refactoring;static-analysis;code-quality;ai</PackageTags>
+    <PackageTags>refactoring;static-analysis;code-quality;ai;java</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>false</IncludeSymbols>
@@ -22,6 +22,8 @@
     <Content Include="native/osx-x64/dowsing-rod" Condition="Exists('native/osx-x64/dowsing-rod')" Pack="true" PackagePath="tools/$(TargetFramework)/any/native/osx-x64/" />
     <Content Include="native/linux-arm64/dowsing-rod" Condition="Exists('native/linux-arm64/dowsing-rod')" Pack="true" PackagePath="tools/$(TargetFramework)/any/native/linux-arm64/" />
     <Content Include="native/linux-x64/dowsing-rod" Condition="Exists('native/linux-x64/dowsing-rod')" Pack="true" PackagePath="tools/$(TargetFramework)/any/native/linux-x64/" />
+    <Content Include="native/linux-musl-arm64/dowsing-rod" Condition="Exists('native/linux-musl-arm64/dowsing-rod')" Pack="true" PackagePath="tools/$(TargetFramework)/any/native/linux-musl-arm64/" />
+    <Content Include="native/linux-musl-x64/dowsing-rod" Condition="Exists('native/linux-musl-x64/dowsing-rod')" Pack="true" PackagePath="tools/$(TargetFramework)/any/native/linux-musl-x64/" />
     <Content Include="native/win-x64/dowsing-rod.exe" Condition="Exists('native/win-x64/dowsing-rod.exe')" Pack="true" PackagePath="tools/$(TargetFramework)/any/native/win-x64/" />
   </ItemGroup>
 </Project>

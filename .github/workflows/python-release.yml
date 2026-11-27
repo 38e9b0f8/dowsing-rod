@@ -1,0 +1,101 @@
+name: Python build
+
+# Builds and tests the PyPI wheels and sdist on every v* tag (and on demand), and keeps them
+# as workflow artifacts. Nothing is published.
+#
+# TODO(pypi): publishing is deliberately disabled. Before enabling it (see TODO.md):
+#   1. Upgrade pyo3 to >= 0.24.1 and drop the two pyo3 ignores in deny.toml.
+#   2. Add a "pypi-release" environment with required reviewers, and a PyPI trusted publisher
+#      for this repository, workflow "python-release.yml", environment "pypi-release".
+#   3. Add a publish job, gated like maven-release.yml (manual, v* tag on main, approval):
+#        needs: [wheels, sdist]; environment: pypi-release
+#        permissions: { contents: read, id-token: write, attestations: write }
+#        steps: checkout → version.mjs --check-tag → download-artifact (wheels-*, sdist) →
+#               pypa/gh-action-pypi-publish (SHA-pinned; trusted publishing, no API token)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets
+
+  wheels:
+    name: Build wheel (${{ matrix.os }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - name: Build wheel
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: build
+          args: --release --locked --compatibility pypi --out dist --find-interpreter
+          manylinux: "2014"
+      - name: Install the built wheel and smoke test it
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          VENV_BIN="$RUNNER_TEMP/venv/bin"; [ -d "$VENV_BIN" ] || VENV_BIN="$RUNNER_TEMP/venv/Scripts"
+          "$VENV_BIN/python" -m pip install --no-index --find-links dist dowsing-rod
+          "$VENV_BIN/dowsing-rod" version
+          "$VENV_BIN/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error > /dev/null
+          "$VENV_BIN/python" -c "import dowsing_rod; print(dowsing_rod.__version__)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Build sdist
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error

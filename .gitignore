@@ -42,3 +42,9 @@ node_modules/
 /nuget/dowsing-rod/native/
 /nuget/**/bin/
 /nuget/**/obj/
+
+# Maven build output and release staging
+/maven/**/target/
+/maven/.mvn/maven.config
+/maven/dowsing-rod-native/native/
+/maven/**/.flattened-pom.xml

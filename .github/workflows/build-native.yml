@@ -1,13 +1,13 @@
 name: Build native binaries
 
-# Shared by the npm and NuGet release workflows, so the platform list, the
-# compatibility floors (glibc 2.17, macOS 11.0 and 10.12), and the build-and-test
-# steps are set once.
+# Shared by the npm, NuGet, and Maven release workflows, so the platform list, the
+# compatibility floors (glibc 2.17, static musl, macOS 11.0 and 10.12), and the
+# build-and-test steps are set once. Release builds use no caches (cache-poisoning guard).
 on:
   workflow_call:
     inputs:
       package:
-        description: Which package to stage from the binaries, "npm" or "nuget".
+        description: Which package to stage from the binaries, "npm", "nuget", or "maven".
         required: true
         type: string
 
@@ -17,31 +17,39 @@ permissions:
 jobs:
   build:
     name: Build and test (${{ matrix.platform }})
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        # platform is the npm package suffix; rid is the .NET runtime identifier.
+        # platform is the npm package suffix; rid is the .NET runtime identifier;
+        # maven is the dowsing-rod-native classifier (os-maven-plugin naming).
         include:
-          - { runner: macos-14, platform: darwin-arm64, rid: osx-arm64, rust_target: aarch64-apple-darwin, artifact_target: aarch64-apple-darwin, builder: cargo, macos: true, macos_deployment_target: '11.0', suffix: '' }
-          - { runner: macos-15-intel, platform: darwin-x64, rid: osx-x64, rust_target: x86_64-apple-darwin, artifact_target: x86_64-apple-darwin, builder: cargo, macos: true, macos_deployment_target: '10.12', suffix: '' }
-          - { runner: ubuntu-22.04, platform: linux-x64, rid: linux-x64, rust_target: x86_64-unknown-linux-gnu, artifact_target: x86_64-unknown-linux-gnu, zig_target: x86_64-unknown-linux-gnu.2.17, builder: zig, suffix: '' }
-          - { runner: ubuntu-24.04-arm, platform: linux-arm64, rid: linux-arm64, rust_target: aarch64-unknown-linux-gnu, artifact_target: aarch64-unknown-linux-gnu, zig_target: aarch64-unknown-linux-gnu.2.17, builder: zig, suffix: '' }
-          - { runner: windows-2022, platform: win32-x64, rid: win-x64, rust_target: x86_64-pc-windows-msvc, artifact_target: x86_64-pc-windows-msvc, builder: cargo, static_crt: true, suffix: '.exe' }
+          - { runner: macos-14, platform: darwin-arm64, rid: osx-arm64, maven: osx-aarch_64, rust_target: aarch64-apple-darwin, artifact_target: aarch64-apple-darwin, builder: cargo, macos: true, macos_deployment_target: '11.0', suffix: '' }
+          - { runner: macos-15-intel, platform: darwin-x64, rid: osx-x64, maven: osx-x86_64, rust_target: x86_64-apple-darwin, artifact_target: x86_64-apple-darwin, builder: cargo, macos: true, macos_deployment_target: '10.12', suffix: '' }
+          - { runner: ubuntu-22.04, platform: linux-x64, rid: linux-x64, maven: linux-x86_64, rust_target: x86_64-unknown-linux-gnu, artifact_target: x86_64-unknown-linux-gnu, zig_target: x86_64-unknown-linux-gnu.2.17, builder: zig, suffix: '' }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64, rid: linux-arm64, maven: linux-aarch_64, rust_target: aarch64-unknown-linux-gnu, artifact_target: aarch64-unknown-linux-gnu, zig_target: aarch64-unknown-linux-gnu.2.17, builder: zig, suffix: '' }
+          - { runner: ubuntu-22.04, platform: linux-x64-musl, rid: linux-musl-x64, maven: linux-x86_64-musl, rust_target: x86_64-unknown-linux-musl, artifact_target: x86_64-unknown-linux-musl, zig_target: x86_64-unknown-linux-musl, builder: zig, musl: true, suffix: '' }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64-musl, rid: linux-musl-arm64, maven: linux-aarch_64-musl, rust_target: aarch64-unknown-linux-musl, artifact_target: aarch64-unknown-linux-musl, zig_target: aarch64-unknown-linux-musl, builder: zig, musl: true, suffix: '' }
+          - { runner: windows-2022, platform: win32-x64, rid: win-x64, maven: windows-x86_64, rust_target: x86_64-pc-windows-msvc, artifact_target: x86_64-pc-windows-msvc, builder: cargo, static_crt: true, suffix: '.exe' }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
           targets: ${{ matrix.rust_target }}
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
       - uses: ./.github/actions/toolchain
         with:
           node: true
           zig: ${{ matrix.builder == 'zig' }}
       - name: Set macOS deployment target
         if: matrix.macos
-        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos_deployment_target }}" >> "$GITHUB_ENV"
+        env:
+          DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
+        run: echo "MACOSX_DEPLOYMENT_TARGET=$DEPLOYMENT_TARGET" >> "$GITHUB_ENV"
       - name: Statically link the Windows C runtime
         if: matrix.static_crt
         shell: bash
@@ -54,10 +62,16 @@ jobs:
       - run: cargo zigbuild -p dowsing-cli --release --locked --target ${{ matrix.zig_target }}
         if: matrix.builder == 'zig'
       - name: Verify Linux glibc floor
-        if: matrix.builder == 'zig'
+        if: matrix.builder == 'zig' && !matrix.musl
         run: |
           REQUIRED="$(readelf --version-info target/${{ matrix.artifact_target }}/release/dowsing-rod | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n1)"
           test "$REQUIRED" = "GLIBC_2.17"
+      - name: Verify static musl binary on Alpine
+        if: matrix.musl
+        run: |
+          BINARY="target/${{ matrix.artifact_target }}/release/dowsing-rod"
+          test -z "$(readelf --program-headers "$BINARY" | grep INTERP || true)"
+          docker run --rm -v "$GITHUB_WORKSPACE:/work:ro" -w /work alpine:3.20 "$BINARY" scan tests/languages --format json --no-cache --fail-on-error > /dev/null
 
       # npm: stage, test the packed install on this platform, and pack.
       - name: Stage native package and launcher
@@ -66,8 +80,11 @@ jobs:
           node scripts/package-npm.mjs ${{ matrix.platform }} target/${{ matrix.artifact_target }}/release/dowsing-rod${{ matrix.suffix }}
           node scripts/package-npm.mjs launcher -
       - name: Test packed npm installation and CLI
-        if: inputs.package == 'npm'
+        if: inputs.package == 'npm' && !matrix.musl
         run: node scripts/test-npm.mjs
+      - name: Test packed npm installation and CLI on Alpine
+        if: inputs.package == 'npm' && matrix.musl
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work node:24-alpine node scripts/test-npm.mjs
       - name: Pack native artifact
         if: inputs.package == 'npm'
         shell: bash
@@ -78,7 +95,7 @@ jobs:
         if: inputs.package == 'npm' && matrix.platform == 'linux-x64'
         run: npm pack ./dist/npm/dowsing-rod --pack-destination dist/tarballs --ignore-scripts
       - if: inputs.package == 'npm'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-${{ matrix.platform }}
           path: dist/tarballs/*.tgz
@@ -91,8 +108,19 @@ jobs:
       # Upload the parent folder: upload-artifact drops the top folder of a single
       # path, and the package job needs each binary under its <rid>/ folder.
       - if: inputs.package == 'nuget'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-native-${{ matrix.rid }}
           path: dist/nuget-native
+          if-no-files-found: error
+
+      # Maven: stage the binary (and its checksum) for the dowsing-rod-native classifier jar.
+      - name: Stage native binary for Maven
+        if: inputs.package == 'maven'
+        run: node scripts/package-maven.mjs ${{ matrix.maven }} target/${{ matrix.artifact_target }}/release/dowsing-rod${{ matrix.suffix }} dist/maven-native
+      - if: inputs.package == 'maven'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maven-native-${{ matrix.maven }}
+          path: dist/maven-native
           if-no-files-found: error

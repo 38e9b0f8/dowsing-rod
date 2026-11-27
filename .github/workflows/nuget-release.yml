@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   native:
     uses: ./.github/workflows/build-native.yml
@@ -20,12 +24,15 @@ jobs:
   package:
     needs: native
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/toolchain
         with:
           dotnet: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: nuget-native-*
           path: nuget/dowsing-rod/native
@@ -36,6 +43,8 @@ jobs:
           test -f nuget/dowsing-rod/native/osx-x64/dowsing-rod
           test -f nuget/dowsing-rod/native/linux-arm64/dowsing-rod
           test -f nuget/dowsing-rod/native/linux-x64/dowsing-rod
+          test -f nuget/dowsing-rod/native/linux-musl-arm64/dowsing-rod
+          test -f nuget/dowsing-rod/native/linux-musl-x64/dowsing-rod
           test -f nuget/dowsing-rod/native/win-x64/dowsing-rod.exe
       - run: dotnet pack nuget/dowsing-rod --configuration Release --output dist/nuget
       - name: Test installed tool
@@ -45,7 +54,7 @@ jobs:
           dotnet tool install --tool-path "$RUNNER_TEMP/dowsing-rod-tool" --add-source "$GITHUB_WORKSPACE/dist/nuget" dowsing-rod --version "$VERSION"
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" version
           "$RUNNER_TEMP/dowsing-rod-tool/dowsing-rod" scan tests/languages --format json --no-cache --fail-on-error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-package
           path: dist/nuget/*.nupkg
@@ -55,12 +64,15 @@ jobs:
     if: inputs.publish && startsWith(github.ref, 'refs/tags/v')
     needs: package
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: nuget-release
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/toolchain
         with:
           dotnet: true
@@ -68,14 +80,16 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/version.mjs --check-tag "$RELEASE_TAG"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nuget-package
           path: dist/nuget
       - name: Authenticate to NuGet with OIDC
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         id: nuget-login
         with:
           user: ${{ secrets.NUGET_USER }}
       - name: Publish to NuGet
-        run: dotnet nuget push dist/nuget/*.nupkg --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push dist/nuget/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate

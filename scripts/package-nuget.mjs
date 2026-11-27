@@ -8,11 +8,13 @@ const suffixes = new Map([
   ['osx-x64', ''],
   ['linux-arm64', ''],
   ['linux-x64', ''],
+  ['linux-musl-arm64', ''],
+  ['linux-musl-x64', ''],
   ['win-x64', '.exe'],
 ]);
 
 if (!suffixes.has(rid) || !binary || !statSync(binary).isFile()) {
-  throw new Error('Usage: node scripts/package-nuget.mjs <osx-arm64|osx-x64|linux-arm64|linux-x64|win-x64> <binary> [output]');
+  throw new Error('Usage: node scripts/package-nuget.mjs <osx-arm64|osx-x64|linux-arm64|linux-x64|linux-musl-arm64|linux-musl-x64|win-x64> <binary> [output]');
 }
 
 const directory = resolve(output, rid);

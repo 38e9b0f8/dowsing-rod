@@ -18,6 +18,7 @@ const DEFAULT_EXCLUDES: &[&str] = &[
     "build",
     "node_modules",
     "target",
+    ".gradle",
     "obj",
     "site-packages",
     ".eggs",
